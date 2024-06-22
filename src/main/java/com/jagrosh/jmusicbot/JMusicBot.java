@@ -15,6 +15,8 @@
  */
 package com.jagrosh.jmusicbot;
 
+import com.gunna.jmusicbot.commands.gpt.ChatCmd;
+import com.gunna.jmusicbot.commands.gpt.SetPersonaCmd;
 import com.jagrosh.jdautilities.command.CommandClientBuilder;
 import com.jagrosh.jdautilities.commons.waiter.EventWaiter;
 import com.jagrosh.jdautilities.examples.command.*;
@@ -107,9 +109,13 @@ public class JMusicBot
                         new PingCommand(),
                         new SettingsCmd(bot),
                         
+                        new ChatCmd(bot),
+                        new SetPersonaCmd(bot),
+                        
                         new LyricsCmd(bot),
                         new NowplayingCmd(bot),
                         new PlayCmd(bot),
+                        new RadioCmd(bot),
                         new PlaylistsCmd(bot),
                         new QueueCmd(bot),
                         new RemoveCmd(bot),

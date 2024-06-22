@@ -291,6 +291,11 @@ public class BotConfig
         return playlistsFolder;
     }
     
+    public String getPromptFolder()
+    {
+        return "./";
+    }
+    
     public boolean getDBots()
     {
         return dbots;

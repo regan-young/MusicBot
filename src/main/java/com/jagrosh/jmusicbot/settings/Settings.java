@@ -38,8 +38,9 @@ public class Settings implements GuildSettingsProvider
     private RepeatMode repeatMode;
     private String prefix;
     private double skipRatio;
+    private String persona;
 
-    public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, String defaultPlaylist, RepeatMode repeatMode, String prefix, double skipRatio)
+    public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, String defaultPlaylist, RepeatMode repeatMode, String prefix, double skipRatio, String persona)
     {
         this.manager = manager;
         try
@@ -71,9 +72,10 @@ public class Settings implements GuildSettingsProvider
         this.repeatMode = repeatMode;
         this.prefix = prefix;
         this.skipRatio = skipRatio;
+        this.persona = persona;
     }
     
-    public Settings(SettingsManager manager, long textId, long voiceId, long roleId, int volume, String defaultPlaylist, RepeatMode repeatMode, String prefix, double skipRatio)
+    public Settings(SettingsManager manager, long textId, long voiceId, long roleId, int volume, String defaultPlaylist, RepeatMode repeatMode, String prefix, double skipRatio, String persona)
     {
         this.manager = manager;
         this.textId = textId;
@@ -84,6 +86,7 @@ public class Settings implements GuildSettingsProvider
         this.repeatMode = repeatMode;
         this.prefix = prefix;
         this.skipRatio = skipRatio;
+        this.persona = persona;
     }
     
     // Getters
@@ -125,6 +128,11 @@ public class Settings implements GuildSettingsProvider
     public double getSkipRatio()
     {
         return skipRatio;
+    }
+    
+    public String getPersona()
+    {
+        return persona;
     }
 
     @Override
@@ -179,6 +187,12 @@ public class Settings implements GuildSettingsProvider
     public void setSkipRatio(double skipRatio)
     {
         this.skipRatio = skipRatio;
+        this.manager.writeSettings();
+    }
+    
+    public void setPersona(String persona)
+    {
+        this.persona = persona;
         this.manager.writeSettings();
     }
 }

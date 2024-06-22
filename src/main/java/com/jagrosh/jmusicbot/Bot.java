@@ -17,14 +17,20 @@ package com.jagrosh.jmusicbot;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+
+import com.gunna.jmusicbot.commands.gpt.PromptLoader;
 import com.jagrosh.jdautilities.commons.waiter.EventWaiter;
 import com.jagrosh.jmusicbot.audio.AloneInVoiceHandler;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
+import com.jagrosh.jmusicbot.audio.FMSourceManager;
 import com.jagrosh.jmusicbot.audio.NowplayingHandler;
 import com.jagrosh.jmusicbot.audio.PlayerManager;
+import com.jagrosh.jmusicbot.audio.StreamingPlayerManager;
 import com.jagrosh.jmusicbot.gui.GUI;
 import com.jagrosh.jmusicbot.playlist.PlaylistLoader;
 import com.jagrosh.jmusicbot.settings.SettingsManager;
+import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
+
 import java.util.Objects;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Activity;
@@ -41,7 +47,9 @@ public class Bot
     private final BotConfig config;
     private final SettingsManager settings;
     private final PlayerManager players;
+    private final StreamingPlayerManager streamingPlayer;
     private final PlaylistLoader playlists;
+    private final PromptLoader prompts;
     private final NowplayingHandler nowplaying;
     private final AloneInVoiceHandler aloneInVoiceHandler;
     
@@ -51,12 +59,17 @@ public class Bot
     
     public Bot(EventWaiter waiter, BotConfig config, SettingsManager settings)
     {
+    	FMSourceManager fm = new FMSourceManager();
         this.waiter = waiter;
         this.config = config;
         this.settings = settings;
         this.playlists = new PlaylistLoader(config);
+        this.prompts = new PromptLoader();
+        this.prompts.load();
         this.threadpool = Executors.newSingleThreadScheduledExecutor();
+        this.streamingPlayer = new StreamingPlayerManager(this, fm);
         this.players = new PlayerManager(this);
+        this.streamingPlayer.init();
         this.players.init();
         this.nowplaying = new NowplayingHandler(this);
         this.nowplaying.init();
@@ -84,14 +97,24 @@ public class Bot
         return threadpool;
     }
     
-    public PlayerManager getPlayerManager()
+	public PlayerManager getPlayerManager()
     {
         return players;
+    }
+    
+    public StreamingPlayerManager getStreamingPlayerManager()
+    {
+        return streamingPlayer;
     }
     
     public PlaylistLoader getPlaylistLoader()
     {
         return playlists;
+    }
+    
+    public PromptLoader getPromptLoader()
+    {
+        return prompts;
     }
     
     public NowplayingHandler getNowplayingHandler()

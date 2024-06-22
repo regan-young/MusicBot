@@ -18,6 +18,7 @@ package com.jagrosh.jmusicbot.audio;
 import com.jagrosh.jmusicbot.Bot;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager;
+//import com.sedmelluq.discord.lavaplayer.source.AudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.source.AudioSourceManagers;
 import com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeAudioSourceManager;
 import net.dv8tion.jda.api.entities.Guild;
@@ -42,8 +43,8 @@ public class PlayerManager extends DefaultAudioPlayerManager
         AudioSourceManagers.registerLocalSource(this);
         source(YoutubeAudioSourceManager.class).setPlaylistPageCount(10);
     }
-    
-    public Bot getBot()
+
+	public Bot getBot()
     {
         return bot;
     }
@@ -60,7 +61,7 @@ public class PlayerManager extends DefaultAudioPlayerManager
         {
             AudioPlayer player = createPlayer();
             player.setVolume(bot.getSettingsManager().getSettings(guild).getVolume());
-            handler = new AudioHandler(this, guild, player);
+            handler = new AudioHandler(this, null, guild, player);
             player.addListener(handler);
             guild.getAudioManager().setSendingHandler(handler);
         }

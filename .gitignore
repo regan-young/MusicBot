@@ -5,3 +5,9 @@
 *.json
 *.txt
 nb*.xml
+/bin/
+/.idea/
+/.metadata/
+/.settings/
+.project
+/.classpath
