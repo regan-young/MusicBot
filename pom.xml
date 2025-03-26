@@ -96,7 +96,7 @@
         <dependency>
             <groupId>org.seleniumhq.selenium</groupId>
             <artifactId>selenium-java</artifactId>
-            <version>4.27.0</version>
+            <version>4.30.0</version>
             <!-- https://github.com/SeleniumHQ/selenium/issues/13791 -->
             <exclusions>
                 <exclusion>
@@ -105,11 +105,11 @@
                 </exclusion>
                 <exclusion>
                     <groupId>org.seleniumhq.selenium</groupId>
-                    <artifactId>selenium-devtools-v129</artifactId>
+                    <artifactId>selenium-devtools-v132</artifactId>
                 </exclusion>
                 <exclusion>
                     <groupId>org.seleniumhq.selenium</groupId>
-                    <artifactId>selenium-devtools-v130</artifactId>
+                    <artifactId>selenium-devtools-v133</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
