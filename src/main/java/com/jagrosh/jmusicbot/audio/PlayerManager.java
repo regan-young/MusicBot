@@ -61,9 +61,6 @@ public class PlayerManager extends DefaultAudioPlayerManager
     public void init()
     {
         TransformativeAudioSourceManager.createTransforms(bot.getConfig().getTransforms()).forEach(t -> registerSourceManager(t));
-
-        if (config.getYTPoToken() != null && config.getYTVisitorData() != null)
-            Web.setPoTokenAndVisitorData(config.getYTPoToken(), config.getYTVisitorData());
         
         YoutubeAudioSourceManager yt = new YoutubeAudioSourceManager(true);
         if (config.getYTRoutingPlanner() != YouTubeUtil.RoutingPlanner.NONE)

@@ -46,10 +46,10 @@ public class BotConfig
     private Path path = null;
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
-            ytPoToken, ytVisitorData, evalEngine;
+            chromePath, chromeDriverPath, evalEngine;
     private YouTubeUtil.RoutingPlanner ytRoutingPlanner;
     private List<IpBlock> ytIpBlocks;
-    private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots;
+    private boolean stayInChannel, songInGame, npImages, updatealerts, chromeHeadless, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
     private int maxYTPlaylistPages;
     private double skipratio;
@@ -103,8 +103,9 @@ public class BotConfig
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
             aliases = config.getConfig("aliases");
-            ytPoToken = config.getString("ytpotoken");
-            ytVisitorData = config.getString("ytvisitordata");
+            chromePath = config.getString("chromepath");
+            chromeDriverPath = config.getString("chromedriverpath");
+            chromeHeadless = config.getBoolean("chromeheadless");
             ytRoutingPlanner = config.getEnum(YouTubeUtil.RoutingPlanner.class, "ytroutingplanner");
             ytIpBlocks = config.getStringList("ytipblocks").stream().map(YouTubeUtil::parseIpBlock).collect(Collectors.toList());
             transforms = config.getConfig("transforms");
@@ -339,14 +340,19 @@ public class BotConfig
         return logLevel;
     }
 
-    public String getYTPoToken()
+    public String getChromePath()
     {
-        return ytPoToken.equals("PO_TOKEN_HERE") ? null : ytPoToken;
+        return chromePath.equals("AUTO") ? null : chromePath;
     }
 
-    public String getYTVisitorData()
+    public String getChromeDriverPath()
     {
-        return ytVisitorData.equals("VISITOR_DATA_HERE") ? null : ytVisitorData;
+        return chromeDriverPath.equals("AUTO") ? null : chromeDriverPath;
+    }
+    
+    public boolean getChromeHeadless()
+    {
+        return chromeHeadless;
     }
 
     public YouTubeUtil.RoutingPlanner getYTRoutingPlanner()

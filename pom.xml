@@ -38,11 +38,6 @@
     </repositories>
 
     <dependencies>
-		<dependency>
-		    <groupId>commons-io</groupId>
-		    <artifactId>commons-io</artifactId>
-		    <version>2.5</version>
-		</dependency>
         <!-- Discord Dependencies -->
         <dependency>
             <groupId>net.dv8tion</groupId>
@@ -69,7 +64,7 @@
         <dependency>
             <groupId>dev.lavalink.youtube</groupId>
             <artifactId>common</artifactId>
-            <version>1.11.1</version>
+            <version>1.12.0</version>
         </dependency>
 	<dependency>
 	    <groupId>com.github.jagrosh</groupId>
@@ -108,6 +103,31 @@
 		    <artifactId>service</artifactId>
 		    <version>0.11.0</version>       
 	   </dependency>
+        <dependency>
+            <groupId>org.seleniumhq.selenium</groupId>
+            <artifactId>selenium-java</artifactId>
+            <version>4.30.0</version>
+            <!-- https://github.com/SeleniumHQ/selenium/issues/13791 -->
+            <exclusions>
+                <exclusion>
+                    <groupId>org.seleniumhq.selenium</groupId>
+                    <artifactId>selenium-devtools-v85</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.seleniumhq.selenium</groupId>
+                    <artifactId>selenium-devtools-v132</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.seleniumhq.selenium</groupId>
+                    <artifactId>selenium-devtools-v133</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonigarcia</groupId>
+            <artifactId>webdrivermanager</artifactId>
+            <version>5.9.2</version>
+        </dependency>
 
         <!-- Testing Dependencies -->
         <dependency>
