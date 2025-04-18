@@ -67,9 +67,9 @@ public class Bot
         this.prompts = new PromptLoader();
         this.prompts.load();
         this.threadpool = Executors.newSingleThreadScheduledExecutor();
-        this.streamingPlayer = new StreamingPlayerManager(this, fm);
-        this.players = new PlayerManager(this);
-        this.streamingPlayer.init();
+        this.players = new PlayerManager(this, config);
+		this.streamingPlayer = new StreamingPlayerManager(this, fm);
+		this.streamingPlayer.init();
         this.players.init();
         this.nowplaying = new NowplayingHandler(this);
         this.nowplaying.init();
@@ -97,7 +97,7 @@ public class Bot
         return threadpool;
     }
     
-	public PlayerManager getPlayerManager()
+    public PlayerManager getPlayerManager()
     {
         return players;
     }
