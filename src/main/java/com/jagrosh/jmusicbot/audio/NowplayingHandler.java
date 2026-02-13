@@ -37,72 +37,60 @@ import net.dv8tion.jda.api.utils.messages.MessageEditData;
  *
  * @author John Grosh (john.a.grosh@gmail.com)
  */
-public class NowplayingHandler
-{
+public class NowplayingHandler {
     private final Bot bot;
-    private final HashMap<Long,Pair<Long,Long>> lastNP; // guild -> channel,message
-    
-    public NowplayingHandler(Bot bot)
-    {
+    private final HashMap<Long, Pair<Long, Long>> lastNP; // guild -> channel,message
+
+    public NowplayingHandler(Bot bot) {
         this.bot = bot;
         this.lastNP = new HashMap<>();
     }
-    
-    public void init()
-    {
-        if(!bot.getConfig().useNPImages())
+
+    public void init() {
+        if (!bot.getConfig().useNPImages())
             bot.getThreadpool().scheduleWithFixedDelay(() -> updateAll(), 0, 5, TimeUnit.SECONDS);
     }
-    
-    public void setLastNPMessage(Message m)
-    {
+
+    public void setLastNPMessage(Message m) {
         var channel = m.getChannel();
         if (channel instanceof TextChannel) {
             TextChannel tc = (TextChannel) channel;
             lastNP.put(m.getGuild().getIdLong(), new Pair<>(tc.getIdLong(), m.getIdLong()));
         }
     }
-    
-    public void clearLastNPMessage(Guild guild)
-    {
+
+    public void clearLastNPMessage(Guild guild) {
         lastNP.remove(guild.getIdLong());
     }
-    
-    private void updateAll()
-    {
+
+    private void updateAll() {
         Set<Long> toRemove = new HashSet<>();
-        for(long guildId: lastNP.keySet())
-        {
+        for (long guildId : lastNP.keySet()) {
             Guild guild = bot.getJDA().getGuildById(guildId);
-            if(guild==null)
-            {
+            if (guild == null) {
                 toRemove.add(guildId);
                 continue;
             }
-            Pair<Long,Long> pair = lastNP.get(guildId);
+            Pair<Long, Long> pair = lastNP.get(guildId);
             TextChannel tc = guild.getTextChannelById(pair.getKey());
-            if(tc==null)
-            {
+            if (tc == null) {
                 toRemove.add(guildId);
                 continue;
             }
-            AudioHandler handler = (AudioHandler)guild.getAudioManager().getSendingHandler();
+            AudioHandler handler = (AudioHandler) guild.getAudioManager().getSendingHandler();
             MessageCreateData msg = handler.getNowPlaying(bot.getJDA());
-            if(msg==null)
-            {
+            if (msg == null) {
                 msg = handler.getNoMusicPlaying(bot.getJDA());
                 toRemove.add(guildId);
             }
-            try 
-            {
+            try {
                 tc.editMessageById(pair.getValue().longValue(), MessageEditData.fromCreateData(msg))
                         .queue(
-                                m -> {}, // on success
+                                m -> {
+                                }, // on success
                                 t -> lastNP.remove(guildId) // on failure
                         );
-            } 
-            catch(Exception e) 
-            {
+            } catch (Exception e) {
                 toRemove.add(guildId);
             }
         }
@@ -110,28 +98,28 @@ public class NowplayingHandler
     }
 
     // "event"-based methods
-    public void onTrackUpdate(AudioTrack track)
-    {
+    public void onTrackUpdate(AudioTrack track) {
         // update bot status if applicable
-        if(bot.getConfig().getSongInStatus())
-        {
+        if (bot.getConfig().getSongInStatus()) {
             if (track != null && bot.getJDA().getGuilds().stream()
                     .filter(g -> {
                         var vs = g.getSelfMember().getVoiceState();
                         return vs != null && vs.getChannel() != null;
-                    }).count() <= 1)
-                bot.getJDA().getPresence().setActivity(Activity.listening(track.getInfo().title));
-            else
+                    }).count() <= 1) {
+                String title = track.getInfo().title;
+                if (title == null || title.isBlank() || title.equalsIgnoreCase("Unspecified description"))
+                    title = "Radio";
+                bot.getJDA().getPresence().setActivity(Activity.listening(title));
+            } else
                 bot.resetGame();
         }
     }
-    
-    public void onMessageDelete(Guild guild, long messageId)
-    {
-        Pair<Long,Long> pair = lastNP.get(guild.getIdLong());
-        if(pair==null)
+
+    public void onMessageDelete(Guild guild, long messageId) {
+        Pair<Long, Long> pair = lastNP.get(guild.getIdLong());
+        if (pair == null)
             return;
-        if(pair.getValue() == messageId)
+        if (pair.getValue() == messageId)
             lastNP.remove(guild.getIdLong());
     }
 }
