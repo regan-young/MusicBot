@@ -29,27 +29,31 @@ import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 public class RadioCmd extends MusicCommand {
     private final Map<String, String> stations;
     private final Map<String, String> stationDisplayNames;
+    private final Map<Long, String> currentStationByGuild;
+    private final List<String> sortedStationKeys;
 
     public RadioCmd(Bot bot) {
         super(bot);
         this.name = "radio";
         this.help = "plays a live radio station";
-        this.arguments = "<station name|list>";
+        this.arguments = "<station name|list|skip>";
         this.aliases = bot.getConfig().getAliases(this.name);
         this.beListening = true;
         this.bePlaying = false;
 
         this.stations = new HashMap<>();
         this.stationDisplayNames = new HashMap<>();
+        this.currentStationByGuild = new HashMap<>();
 
         // RNZ
-        addStation("rnznational", "RNZ National", "https://radionz.streamguys1.com/national/national/playlist.m3u8");
+        addStation("rnz", "RNZ", "http://radionz-ice.streamguys.com/national.mp3");
 
         // NZME Stations (StreamTheWorld)
         addStation("newstalkzb", "Newstalk ZB",
@@ -72,6 +76,9 @@ public class RadioCmd extends MusicCommand {
         addStation("thebreeze", "The Breeze", "https://mediaworks.streamguys1.com/breeze_net_icy");
         addStation("thesound", "The Sound", "https://mediaworks.streamguys1.com/sound_net_icy");
         addStation("magic", "Magic", "https://mediaworks.streamguys1.com/magic_net_icy");
+
+        // Build sorted list for skip functionality
+        this.sortedStationKeys = stations.keySet().stream().sorted().collect(Collectors.toList());
     }
 
     private void addStation(String key, String displayName, String url) {
@@ -90,75 +97,112 @@ public class RadioCmd extends MusicCommand {
         return uri != null && (uri.contains("streamguys") || uri.contains("streamtheworld"));
     }
 
+    /**
+     * Loads and plays a station, handling skip of current radio if needed.
+     */
+    private void loadStation(CommandEvent event, String stationKey) {
+        String url = stations.get(stationKey);
+        String displayName = stationDisplayNames.get(stationKey);
+        event.reply(event.getClient().getSuccess() + " Loading **" + displayName + "**...",
+                m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), url, new AudioLoadResultHandler() {
+                    @Override
+                    public void trackLoaded(AudioTrack track) {
+                        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager()
+                                .getSendingHandler();
+
+                        boolean wasRadio = isRadioStream(handler);
+
+                        // Add the new track to the queue FIRST, then stop the radio.
+                        // If we stop first, onTrackEnd sees an empty queue and disconnects.
+                        handler.addTrack(
+                                new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
+
+                        if (wasRadio) {
+                            handler.getPlayer().stopTrack();
+                        }
+
+                        // Track which station is playing in this guild for skip
+                        currentStationByGuild.put(event.getGuild().getIdLong(), stationKey);
+
+                        // Set bot status to show the station name
+                        if (bot.getConfig().getSongInStatus()) {
+                            event.getJDA().getPresence()
+                                    .setActivity(Activity.listening("\uD83D\uDCFB " + displayName));
+                        }
+
+                        m.editMessage(FormatUtil.filter(event.getClient().getSuccess() + " Now playing **"
+                                + displayName + "** \uD83D\uDCFB")).queue();
+                    }
+
+                    @Override
+                    public void playlistLoaded(AudioPlaylist playlist) {
+                        if (!playlist.getTracks().isEmpty()) {
+                            trackLoaded(playlist.getTracks().get(0));
+                        }
+                    }
+
+                    @Override
+                    public void noMatches() {
+                        m.editMessage(FormatUtil.filter(
+                                event.getClient().getWarning() + " No matching stream found for **" + displayName
+                                        + "**."))
+                                .queue();
+                    }
+
+                    @Override
+                    public void loadFailed(FriendlyException exception) {
+                        m.editMessage(FormatUtil.filter(event.getClient().getError() + " Failed to load station: "
+                                + exception.getMessage())).queue();
+                    }
+                }));
+    }
+
     @Override
     public void doCommand(CommandEvent event) {
         String args = event.getArgs().trim().toLowerCase();
 
         if (args.isEmpty() || args.equals("list")) {
+            String prefix = event.getClient().getPrefix();
             StringBuilder builder = new StringBuilder();
-            builder.append("__**Available Radio Stations:**__\n");
-            for (String stationKey : stations.keySet().stream().sorted().collect(Collectors.toList())) {
+            builder.append("__**\uD83D\uDCFB Radio Commands:**__\n");
+            builder.append("`").append(prefix).append(name).append(" <station>` - Play a radio station\n");
+            builder.append("`").append(prefix).append(name).append(" list` - Show available stations\n");
+            builder.append("`").append(prefix).append(name).append(" skip` - Skip to the next station\n");
+            builder.append("\n__**Available Stations:**__\n");
+            for (String stationKey : sortedStationKeys) {
                 builder.append("`").append(stationKey).append("` - ").append(stationDisplayNames.get(stationKey))
                         .append("\n");
             }
-            builder.append("\nType `").append(event.getClient().getPrefix()).append(name)
-                    .append(" <station name>` to play.");
             event.reply(builder.toString());
             return;
         }
 
+        if (args.equals("skip") || args.equals("next")) {
+            AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
+            if (!isRadioStream(handler)) {
+                event.replyError("No radio station is currently playing. Use `" + event.getClient().getPrefix() + name
+                        + " <station name>` to start one.");
+                return;
+            }
+
+            String currentKey = currentStationByGuild.get(event.getGuild().getIdLong());
+            String nextKey;
+
+            if (currentKey != null && sortedStationKeys.contains(currentKey)) {
+                int currentIndex = sortedStationKeys.indexOf(currentKey);
+                int nextIndex = (currentIndex + 1) % sortedStationKeys.size();
+                nextKey = sortedStationKeys.get(nextIndex);
+            } else {
+                // Can't determine current station, just play the first one
+                nextKey = sortedStationKeys.get(0);
+            }
+
+            loadStation(event, nextKey);
+            return;
+        }
+
         if (stations.containsKey(args)) {
-            String url = stations.get(args);
-            String displayName = stationDisplayNames.get(args);
-            event.reply(event.getClient().getSuccess() + " Loading **" + displayName + "**...",
-                    m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), url, new AudioLoadResultHandler() {
-                        @Override
-                        public void trackLoaded(AudioTrack track) {
-                            AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager()
-                                    .getSendingHandler();
-
-                            boolean wasRadio = isRadioStream(handler);
-
-                            // Add the new track to the queue FIRST, then stop the radio.
-                            // If we stop first, onTrackEnd sees an empty queue and disconnects.
-                            handler.addTrack(
-                                    new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
-
-                            if (wasRadio) {
-                                handler.getPlayer().stopTrack();
-                            }
-
-                            // Set bot status to show the station name
-                            if (bot.getConfig().getSongInStatus()) {
-                                event.getJDA().getPresence()
-                                        .setActivity(Activity.listening("\uD83D\uDCFB " + displayName));
-                            }
-
-                            m.editMessage(FormatUtil.filter(event.getClient().getSuccess() + " Now playing **"
-                                    + displayName + "** \uD83D\uDCFB")).queue();
-                        }
-
-                        @Override
-                        public void playlistLoaded(AudioPlaylist playlist) {
-                            if (!playlist.getTracks().isEmpty()) {
-                                trackLoaded(playlist.getTracks().get(0));
-                            }
-                        }
-
-                        @Override
-                        public void noMatches() {
-                            m.editMessage(FormatUtil.filter(
-                                    event.getClient().getWarning() + " No matching stream found for **" + displayName
-                                            + "**."))
-                                    .queue();
-                        }
-
-                        @Override
-                        public void loadFailed(FriendlyException exception) {
-                            m.editMessage(FormatUtil.filter(event.getClient().getError() + " Failed to load station: "
-                                    + exception.getMessage())).queue();
-                        }
-                    }));
+            loadStation(event, args);
         } else {
             event.replyError("Station `" + args + "` not found. Type `" + event.getClient().getPrefix() + name
                     + " list` to see available stations.");
