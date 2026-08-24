@@ -30,6 +30,13 @@ import com.sedmelluq.discord.lavaplayer.source.soundcloud.SoundCloudAudioSourceM
 import com.sedmelluq.discord.lavaplayer.source.twitch.TwitchStreamAudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.source.vimeo.VimeoAudioSourceManager;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
+import dev.lavalink.youtube.clients.AndroidVr;
+import dev.lavalink.youtube.clients.MWeb;
+import dev.lavalink.youtube.clients.Music;
+import dev.lavalink.youtube.clients.Tv;
+import dev.lavalink.youtube.clients.TvHtml5Simply;
+import dev.lavalink.youtube.clients.Web;
+import dev.lavalink.youtube.clients.WebEmbedded;
 import net.dv8tion.jda.api.entities.Guild;
 
 /**
@@ -49,7 +56,18 @@ public class PlayerManager extends DefaultAudioPlayerManager
     {
         TransformativeAudioSourceManager.createTransforms(bot.getConfig().getTransforms()).forEach(t -> registerSourceManager(t));
 
-        YoutubeAudioSourceManager yt = new YoutubeAudioSourceManager(true);
+        // A PO token bound to matching visitor data is required or YouTube
+        // hands the web clients SABR-only streams, which lavaplayer cannot read.
+        String poToken = bot.getConfig().getYtPoToken();
+        String visitorData = bot.getConfig().getYtVisitorData();
+        if (poToken != null && !poToken.isEmpty() && visitorData != null && !visitorData.isEmpty())
+            Web.setPoTokenAndVisitorData(poToken, visitorData);
+
+        // Explicit client list: the library defaults leave out the clients that
+        // still return direct audio URLs. Order matters — first success wins.
+        YoutubeAudioSourceManager yt = new YoutubeAudioSourceManager(true,
+                new Music(), new Web(), new MWeb(), new WebEmbedded(),
+                new Tv(), new TvHtml5Simply(), new AndroidVr());
         yt.setPlaylistPageCount(bot.getConfig().getMaxYTPlaylistPages());
         registerSourceManager(yt);
 

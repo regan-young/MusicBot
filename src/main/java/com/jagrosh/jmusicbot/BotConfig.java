@@ -41,7 +41,7 @@ public class BotConfig
     private Path path = null;
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
-            evalEngine;
+            evalEngine, ytPoToken, ytVisitorData;
     private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
     private int maxYTPlaylistPages;
@@ -93,6 +93,8 @@ public class BotConfig
             evalEngine = config.getString("evalengine");
             maxSeconds = config.getLong("maxtime");
             maxYTPlaylistPages = config.getInt("maxytplaylistpages");
+            ytPoToken = config.getString("ytpotoken");
+            ytVisitorData = config.getString("ytvisitordata");
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
             aliases = config.getConfig("aliases");
@@ -346,6 +348,16 @@ public class BotConfig
     public int getMaxYTPlaylistPages()
     {
         return maxYTPlaylistPages;
+    }
+
+    public String getYtPoToken()
+    {
+        return ytPoToken;
+    }
+
+    public String getYtVisitorData()
+    {
+        return ytVisitorData;
     }
     
     public String getMaxTime()

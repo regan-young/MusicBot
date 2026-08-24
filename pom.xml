@@ -36,6 +36,14 @@
             <url>https://maven.lavalink.dev/releases</url>
         </repository>
         <repository>
+            <id>lavalinkSnapshots</id>
+            <name>Lavalink Snapshots</name>
+            <url>https://maven.lavalink.dev/snapshots</url>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+        <repository>
             <id>m2-chew-releases</id>
             <name>Maven Chewtral</name>
             <url>https://m2.chew.pro/releases</url>
@@ -66,7 +74,7 @@
         <dependency>
             <groupId>dev.lavalink.youtube</groupId>
             <artifactId>common</artifactId>
-            <version>1.15.0</version>
+            <version>1.18.2</version>
         </dependency>
 	<dependency>
 	    <groupId>com.github.jagrosh</groupId>
