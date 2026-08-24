@@ -80,6 +80,16 @@ public class PlayerManager extends DefaultAudioPlayerManager
                 new Music(), new Web(), new MWeb(), new WebEmbedded(),
                 new Tv(), new TvHtml5Simply(), new AndroidVr());
         yt.setPlaylistPageCount(bot.getConfig().getMaxYTPlaylistPages());
+
+        // Clients such as ANDROID_VR refuse to serve streams without a signed-in
+        // session. An empty token starts the device-code flow and logs the
+        // refresh token to paste back into config.txt.
+        if (bot.getConfig().useYtOauth())
+        {
+            String refreshToken = bot.getConfig().getYtOauthToken();
+            yt.useOauth2(refreshToken == null || refreshToken.isEmpty() ? null : refreshToken, false);
+        }
+
         registerSourceManager(yt);
 
         registerSourceManager(SoundCloudAudioSourceManager.createDefault());
