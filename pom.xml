@@ -60,7 +60,7 @@
         <dependency>
             <groupId>net.dv8tion</groupId>
             <artifactId>JDA</artifactId>
-            <version>6.1.1</version>
+            <version>6.5.0</version>
         </dependency>
         <dependency>
             <groupId>pw.chew</groupId>
@@ -80,6 +80,19 @@
             <groupId>dev.lavalink.youtube</groupId>
             <artifactId>common</artifactId>
             <version>1.18.2</version>
+        </dependency>
+        <!-- Discord requires the DAVE (E2EE) protocol for voice since 2026-03-02.
+             JDA ships the interfaces but no implementation, so voice connections
+             are rejected with close code 4017 without one of these. -->
+        <dependency>
+            <groupId>club.minnced</groupId>
+            <artifactId>jdave-api</artifactId>
+            <version>0.1.8</version>
+        </dependency>
+        <dependency>
+            <groupId>club.minnced</groupId>
+            <artifactId>jdave-native-linux-x86-64</artifactId>
+            <version>0.1.8</version>
         </dependency>
         <dependency>
             <groupId>com.github.topi314.lavasrc</groupId>
@@ -173,7 +186,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
     </properties>
 </project>
