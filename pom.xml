@@ -36,6 +36,11 @@
             <url>https://maven.lavalink.dev/releases</url>
         </repository>
         <repository>
+            <id>topi</id>
+            <name>LavaSrc Repository</name>
+            <url>https://maven.topi.wtf/releases</url>
+        </repository>
+        <repository>
             <id>lavalinkSnapshots</id>
             <name>Lavalink Snapshots</name>
             <url>https://maven.lavalink.dev/snapshots</url>
@@ -75,6 +80,11 @@
             <groupId>dev.lavalink.youtube</groupId>
             <artifactId>common</artifactId>
             <version>1.18.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.topi314.lavasrc</groupId>
+            <artifactId>lavasrc</artifactId>
+            <version>4.8.3</version>
         </dependency>
 	<dependency>
 	    <groupId>com.github.jagrosh</groupId>

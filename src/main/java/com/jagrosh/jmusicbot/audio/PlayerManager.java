@@ -29,6 +29,7 @@ import com.sedmelluq.discord.lavaplayer.source.nico.NicoAudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.source.soundcloud.SoundCloudAudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.source.twitch.TwitchStreamAudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.source.vimeo.VimeoAudioSourceManager;
+import com.github.topi314.lavasrc.ytdlp.YtdlpAudioSourceManager;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
 import dev.lavalink.youtube.YoutubeSourceOptions;
 import dev.lavalink.youtube.clients.AndroidVr;
@@ -63,6 +64,13 @@ public class PlayerManager extends DefaultAudioPlayerManager
         String visitorData = bot.getConfig().getYtVisitorData();
         if (poToken != null && !poToken.isEmpty() && visitorData != null && !visitorData.isEmpty())
             Web.setPoTokenAndVisitorData(poToken, visitorData);
+
+        // yt-dlp copes with YouTube's current stream protections (SABR, signature
+        // ciphers, PO tokens); the built-in source does not, and fails on nearly all
+        // commercial music. Registered first so it claims YouTube links and searches.
+        String ytdlpPath = bot.getConfig().getYtdlpPath();
+        if (ytdlpPath != null && !ytdlpPath.isEmpty())
+            registerSourceManager(new YtdlpAudioSourceManager(ytdlpPath));
 
         // Signature deciphering is delegated to a remote cipher server when one
         // is configured. Local extraction breaks whenever YouTube reshapes its

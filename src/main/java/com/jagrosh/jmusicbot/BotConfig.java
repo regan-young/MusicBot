@@ -42,7 +42,8 @@ public class BotConfig
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
             evalEngine, ytPoToken, ytVisitorData,
-            ytCipherUrl, ytCipherPassword, ytCipherUserAgent, ytOauthToken;
+            ytCipherUrl, ytCipherPassword, ytCipherUserAgent, ytOauthToken,
+            ytdlpPath;
     private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots, ytOauth;
     private long owner, maxSeconds, aloneTimeUntilStop;
     private int maxYTPlaylistPages;
@@ -101,6 +102,7 @@ public class BotConfig
             ytCipherUserAgent = config.getString("ytcipheruseragent");
             ytOauth = config.getBoolean("ytoauth");
             ytOauthToken = config.getString("ytoauthtoken");
+            ytdlpPath = config.getString("ytdlppath");
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
             aliases = config.getConfig("aliases");
@@ -389,6 +391,11 @@ public class BotConfig
     public String getYtOauthToken()
     {
         return ytOauthToken;
+    }
+
+    public String getYtdlpPath()
+    {
+        return ytdlpPath;
     }
     
     public String getMaxTime()
