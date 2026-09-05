@@ -46,7 +46,7 @@ public class BotConfig
             ytdlpPath;
     private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots, ytOauth;
     private long owner, maxSeconds, aloneTimeUntilStop;
-    private int maxYTPlaylistPages;
+    private int maxYTPlaylistPages, mixSongs;
     private double skipratio;
     private OnlineStatus status;
     private Activity game;
@@ -95,6 +95,7 @@ public class BotConfig
             evalEngine = config.getString("evalengine");
             maxSeconds = config.getLong("maxtime");
             maxYTPlaylistPages = config.getInt("maxytplaylistpages");
+            mixSongs = config.getInt("mixsongs");
             ytPoToken = config.getString("ytpotoken");
             ytVisitorData = config.getString("ytvisitordata");
             ytCipherUrl = config.getString("ytcipherurl");
@@ -356,6 +357,11 @@ public class BotConfig
     public int getMaxYTPlaylistPages()
     {
         return maxYTPlaylistPages;
+    }
+
+    public int getMixSongs()
+    {
+        return mixSongs;
     }
 
     public String getYtPoToken()

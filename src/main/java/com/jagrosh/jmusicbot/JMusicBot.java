@@ -184,6 +184,7 @@ public class JMusicBot {
                         new SettingsCmd(bot),
 
                         new LyricsCmd(bot),
+                        new MixCmd(bot),
                         new NowplayingCmd(bot),
                         new PlayCmd(bot),
                         new RadioCmd(bot),
