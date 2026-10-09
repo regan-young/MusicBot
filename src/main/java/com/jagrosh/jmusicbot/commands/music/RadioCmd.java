@@ -72,7 +72,7 @@ public class RadioCmd extends MusicCommand {
 
     private static final String NZ = "🇳🇿 New Zealand", FIP_ORIGIN = "🇫🇷 Paris, France";
     private static final String FIP_HOME = "https://www.radiofrance.fr/fip";
-    private static final String FIP_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/FIP_logo_2021.svg/240px-FIP_logo_2021.svg.png";
+    private static final String FIP_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/FIP_logo_2021.svg/250px-FIP_logo_2021.svg.png";
 
     /** A curated station. */
     private record Curated(String key, String group, String url, RadioMetadata.StationInfo info) {
