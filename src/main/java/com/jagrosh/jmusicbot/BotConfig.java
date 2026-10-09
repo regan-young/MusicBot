@@ -41,10 +41,8 @@ public class BotConfig
     private Path path = null;
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
-            evalEngine, ytPoToken, ytVisitorData,
-            ytCipherUrl, ytCipherPassword, ytCipherUserAgent, ytOauthToken,
-            ytdlpPath;
-    private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots, ytOauth;
+            evalEngine, ytdlpPath;
+    private boolean stayInChannel, songInGame, npImages, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
     private int maxYTPlaylistPages, mixSongs;
     private double skipratio;
@@ -89,20 +87,12 @@ public class BotConfig
             stayInChannel = config.getBoolean("stayinchannel");
             songInGame = config.getBoolean("songinstatus");
             npImages = config.getBoolean("npimages");
-            updatealerts = config.getBoolean("updatealerts");
             logLevel = config.getString("loglevel");
             useEval = config.getBoolean("eval");
             evalEngine = config.getString("evalengine");
             maxSeconds = config.getLong("maxtime");
             maxYTPlaylistPages = config.getInt("maxytplaylistpages");
             mixSongs = config.getInt("mixsongs");
-            ytPoToken = config.getString("ytpotoken");
-            ytVisitorData = config.getString("ytvisitordata");
-            ytCipherUrl = config.getString("ytcipherurl");
-            ytCipherPassword = config.getString("ytcipherpassword");
-            ytCipherUserAgent = config.getString("ytcipheruseragent");
-            ytOauth = config.getBoolean("ytoauth");
-            ytOauthToken = config.getString("ytoauthtoken");
             ytdlpPath = config.getString("ytdlppath");
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
@@ -324,11 +314,6 @@ public class BotConfig
         return dbots;
     }
     
-    public boolean useUpdateAlerts()
-    {
-        return updatealerts;
-    }
-
     public String getLogLevel()
     {
         return logLevel;
@@ -362,41 +347,6 @@ public class BotConfig
     public int getMixSongs()
     {
         return mixSongs;
-    }
-
-    public String getYtPoToken()
-    {
-        return ytPoToken;
-    }
-
-    public String getYtVisitorData()
-    {
-        return ytVisitorData;
-    }
-
-    public String getYtCipherUrl()
-    {
-        return ytCipherUrl;
-    }
-
-    public String getYtCipherPassword()
-    {
-        return ytCipherPassword;
-    }
-
-    public String getYtCipherUserAgent()
-    {
-        return ytCipherUserAgent;
-    }
-
-    public boolean useYtOauth()
-    {
-        return ytOauth;
-    }
-
-    public String getYtOauthToken()
-    {
-        return ytOauthToken;
     }
 
     public String getYtdlpPath()

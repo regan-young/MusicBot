@@ -32,7 +32,6 @@ import com.sedmelluq.discord.lavaplayer.source.vimeo.VimeoAudioSourceManager;
 import com.github.topi314.lavasrc.ytdlp.YtdlpAudioSourceManager;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
 import dev.lavalink.youtube.YoutubeSourceOptions;
-import dev.lavalink.youtube.clients.AndroidVr;
 import dev.lavalink.youtube.clients.MWeb;
 import dev.lavalink.youtube.clients.Music;
 import dev.lavalink.youtube.clients.Tv;
@@ -58,13 +57,6 @@ public class PlayerManager extends DefaultAudioPlayerManager
     {
         TransformativeAudioSourceManager.createTransforms(bot.getConfig().getTransforms()).forEach(t -> registerSourceManager(t));
 
-        // A PO token bound to matching visitor data is required or YouTube
-        // hands the web clients SABR-only streams, which lavaplayer cannot read.
-        String poToken = bot.getConfig().getYtPoToken();
-        String visitorData = bot.getConfig().getYtVisitorData();
-        if (poToken != null && !poToken.isEmpty() && visitorData != null && !visitorData.isEmpty())
-            Web.setPoTokenAndVisitorData(poToken, visitorData);
-
         // yt-dlp copes with YouTube's current stream protections (SABR, signature
         // ciphers, PO tokens); the built-in source does not, and fails on nearly all
         // commercial music. Registered first so it claims YouTube links and searches.
@@ -72,31 +64,16 @@ public class PlayerManager extends DefaultAudioPlayerManager
         if (ytdlpPath != null && !ytdlpPath.isEmpty())
             registerSourceManager(new YtdlpAudioSourceManager(ytdlpPath));
 
-        // Signature deciphering is delegated to a remote cipher server when one
-        // is configured. Local extraction breaks whenever YouTube reshapes its
-        // player script ("Must find sig function"), which it now does routinely.
-        YoutubeSourceOptions options = new YoutubeSourceOptions().setAllowSearch(true);
-        String cipherUrl = bot.getConfig().getYtCipherUrl();
-        if (cipherUrl != null && !cipherUrl.isEmpty())
-            options.setRemoteCipher(cipherUrl,
-                    bot.getConfig().getYtCipherPassword(),
-                    bot.getConfig().getYtCipherUserAgent());
-
+        // Built-in source: a fallback for when yt-dlp is not configured. It can't
+        // play most commercial music without the PO token / cipher / OAuth
+        // workarounds this fork used to carry, which yt-dlp made unnecessary.
         // Explicit client list: the library defaults leave out the clients that
         // still return direct audio URLs. Order matters — first success wins.
-        YoutubeAudioSourceManager yt = new YoutubeAudioSourceManager(options,
+        YoutubeAudioSourceManager yt = new YoutubeAudioSourceManager(
+                new YoutubeSourceOptions().setAllowSearch(true),
                 new Music(), new Web(), new MWeb(), new WebEmbedded(),
-                new Tv(), new TvHtml5Simply(), new AndroidVr());
+                new Tv(), new TvHtml5Simply());
         yt.setPlaylistPageCount(bot.getConfig().getMaxYTPlaylistPages());
-
-        // Clients such as ANDROID_VR refuse to serve streams without a signed-in
-        // session. An empty token starts the device-code flow and logs the
-        // refresh token to paste back into config.txt.
-        if (bot.getConfig().useYtOauth())
-        {
-            String refreshToken = bot.getConfig().getYtOauthToken();
-            yt.useOauth2(refreshToken == null || refreshToken.isEmpty() ? null : refreshToken, false);
-        }
 
         registerSourceManager(yt);
 

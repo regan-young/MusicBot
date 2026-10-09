@@ -29,10 +29,6 @@ import net.dv8tion.jda.api.OnlineStatus;
 import net.dv8tion.jda.api.entities.Activity;
 import net.dv8tion.jda.api.entities.ApplicationInfo;
 import net.dv8tion.jda.api.entities.User;
-import okhttp3.*;
-import org.json.JSONException;
-import org.json.JSONObject;
-import org.json.JSONTokener;
 
 /**
  *
@@ -40,10 +36,6 @@ import org.json.JSONTokener;
  */
 public class OtherUtil
 {
-    public final static String NEW_VERSION_AVAILABLE = "There is a new version of JMusicBot available!\n"
-                    + "Current version: %s\n"
-                    + "New Version: %s\n\n"
-                    + "Please visit https://github.com/jagrosh/MusicBot/releases/latest to get the latest release.";
     private final static String WINDOWS_INVALID_PATH = "c:\\windows\\system32\\";
     
     /**
@@ -161,20 +153,6 @@ public class OtherUtil
                     "It appears that you may not be using a supported Java version. Please use 64-bit java.");
     }
     
-    public static void checkVersion(Prompt prompt)
-    {
-        // Get current version number
-        String version = getCurrentVersion();
-        
-        // Check for new version
-        String latestVersion = getLatestVersion();
-        
-        if(latestVersion!=null && !latestVersion.equals(version))
-        {
-            prompt.alert(Prompt.Level.WARNING, "JMusicBot Version", String.format(NEW_VERSION_AVAILABLE, version, latestVersion));
-        }
-    }
-    
     public static String getCurrentVersion()
     {
         if(JMusicBot.class.getPackage()!=null && JMusicBot.class.getPackage().getImplementationVersion()!=null)
@@ -183,35 +161,6 @@ public class OtherUtil
             return "UNKNOWN";
     }
     
-    public static String getLatestVersion()
-    {
-        try
-        {
-            Response response = new OkHttpClient.Builder().build()
-                    .newCall(new Request.Builder().get().url("https://api.github.com/repos/jagrosh/MusicBot/releases/latest").build())
-                    .execute();
-            ResponseBody body = response.body();
-            if(body != null)
-            {
-                try(Reader reader = body.charStream())
-                {
-                    JSONObject obj = new JSONObject(new JSONTokener(reader));
-                    return obj.getString("tag_name");
-                }
-                finally
-                {
-                    response.close();
-                }
-            }
-            else
-                return null;
-        }
-        catch(IOException | JSONException | NullPointerException ex)
-        {
-            return null;
-        }
-    }
-
     /**
      * Checks if the bot JMusicBot is being run on is supported & returns the reason if it is not.
      * @return A string with the reason, or null if it is supported.
