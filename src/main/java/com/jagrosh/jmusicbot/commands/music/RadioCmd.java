@@ -77,6 +77,9 @@ public class RadioCmd extends MusicCommand {
         addStation("thesound", "The Sound", "https://mediaworks.streamguys1.com/sound_net_icy");
         addStation("magic", "Magic", "https://mediaworks.streamguys1.com/magic_net_icy");
 
+        // International
+        addStation("fip", "FIP", "https://icecast.radiofrance.fr/fip-midfi.mp3");
+
         // Build sorted list for skip functionality
         this.sortedStationKeys = stations.keySet().stream().sorted().collect(Collectors.toList());
     }
@@ -94,7 +97,8 @@ public class RadioCmd extends MusicCommand {
             return false;
         }
         String uri = handler.getPlayer().getPlayingTrack().getInfo().uri;
-        return uri != null && (uri.contains("streamguys") || uri.contains("streamtheworld"));
+        return uri != null && (uri.contains("streamguys") || uri.contains("streamtheworld")
+                || uri.contains("radiofrance"));
     }
 
     /**
