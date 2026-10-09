@@ -18,6 +18,7 @@ package com.jagrosh.jmusicbot.audio;
 import com.dunctebot.sourcemanagers.DuncteBotSources;
 import com.jagrosh.jmusicbot.Bot;
 import com.sedmelluq.discord.lavaplayer.container.MediaContainerRegistry;
+import com.sedmelluq.discord.lavaplayer.player.AudioConfiguration;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.source.AudioSourceManagers;
@@ -55,6 +56,11 @@ public class PlayerManager extends DefaultAudioPlayerManager
     
     public void init()
     {
+        // Radio streams are mostly 44.1 kHz and Discord wants 48 kHz; the default
+        // LOW resampler is audibly worse. Opus quality 10 is the maximum.
+        getConfiguration().setResamplingQuality(AudioConfiguration.ResamplingQuality.HIGH);
+        getConfiguration().setOpusEncodingQuality(AudioConfiguration.OPUS_QUALITY_MAX);
+
         TransformativeAudioSourceManager.createTransforms(bot.getConfig().getTransforms()).forEach(t -> registerSourceManager(t));
 
         // yt-dlp copes with YouTube's current stream protections (SABR, signature

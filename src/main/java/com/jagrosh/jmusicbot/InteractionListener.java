@@ -20,6 +20,7 @@ import com.jagrosh.jdautilities.command.CommandClient;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.PlayerControls;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
+import com.jagrosh.jmusicbot.audio.RadioBrowser;
 import com.jagrosh.jmusicbot.commands.DJCommand;
 import com.jagrosh.jmusicbot.commands.HelpMessage;
 import com.jagrosh.jmusicbot.commands.InteractionCommandEvent;
@@ -31,7 +32,11 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.events.interaction.command.CommandAutoCompleteInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
+import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
+import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
+import net.dv8tion.jda.api.interactions.modals.ModalMapping;
+import net.dv8tion.jda.api.utils.messages.MessageEditData;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.InteractionContextType;
@@ -47,6 +52,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
@@ -66,7 +72,7 @@ public class InteractionListener extends ListenerAdapter {
             new Slash("play", "play", "play a song or add it to the queue",
                     new OptionData(OptionType.STRING, "song", "song title or URL", true)),
             new Slash("radio", "radio", "play a radio station: NZ favourites or any station worldwide",
-                    new OptionData(OptionType.STRING, "station", "station name, or \"list\"", true).setAutoComplete(true)),
+                    new OptionData(OptionType.STRING, "station", "a station name, genre, or \"list\" to browse", true).setAutoComplete(true)),
             new Slash("mix", "mix", "queue songs like a song (or like what's playing)",
                     new OptionData(OptionType.STRING, "song", "song to build the mix around", false)),
             new Slash("skip", null, "skip the song (a vote, unless you're a DJ or requested it)", null),
@@ -208,7 +214,13 @@ public class InteractionListener extends ListenerAdapter {
     @Override
     public void onButtonInteraction(@NotNull ButtonInteractionEvent event) {
         String id = event.getComponentId();
-        if (!id.startsWith(PlayerControls.ID_PREFIX) || !event.isFromGuild())
+        if (!event.isFromGuild())
+            return;
+        if (id.startsWith(PlayerControls.RADIO_PREFIX)) {
+            onRadioButton(event, id);
+            return;
+        }
+        if (!id.startsWith(PlayerControls.ID_PREFIX))
             return;
         Guild guild = event.getGuild();
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
@@ -240,6 +252,92 @@ public class InteractionListener extends ListenerAdapter {
         }
         commandEvent.cleanUpIfUnanswered();
         bot.getPlayerControls().refresh(guild);
+    }
+
+    // ------------------------------------------------------------------ radio
+
+    private RadioCmd radioCmd() {
+        Command command = findCommand("radio");
+        return command instanceof RadioCmd ? (RadioCmd) command : null;
+    }
+
+    private void onRadioButton(ButtonInteractionEvent event, String id) {
+        RadioCmd radio = radioCmd();
+        if (radio == null)
+            return;
+        switch (id) {
+            case PlayerControls.RADIO_SEARCH:
+                // A modal must be the first response, so no defer here
+                event.replyModal(radio.searchModal()).queue();
+                break;
+            case PlayerControls.RADIO_PANEL:
+                event.reply(radio.panel(event.getGuild())).setEphemeral(true).queue();
+                break;
+            case RadioCmd.POPULAR:
+                event.deferReply(true).queue();
+                CompletableFuture.supplyAsync(radio::popular).thenAccept(stations -> showResults(event,
+                        "\uD83C\uDF0D Popular worldwide", stations, "The station directory isn't answering; try again shortly."));
+                break;
+            case RadioCmd.RANDOM:
+                runRadio(event, "random");
+                break;
+            case PlayerControls.RADIO_NEXT:
+                runRadio(event, "skip");
+                break;
+            default:
+                event.reply("That button is no longer supported.").setEphemeral(true).queue();
+        }
+    }
+
+    @Override
+    public void onStringSelectInteraction(@NotNull StringSelectInteractionEvent event) {
+        String id = event.getComponentId();
+        if (!event.isFromGuild() || event.getValues().isEmpty()
+                || !(id.startsWith(RadioCmd.PICK) || id.equals(RadioCmd.WORLD_PICK)))
+            return;
+        runRadio(event, event.getValues().get(0));
+    }
+
+    @Override
+    public void onModalInteraction(@NotNull ModalInteractionEvent event) {
+        if (!event.getModalId().equals(RadioCmd.SEARCH_MODAL) || !event.isFromGuild())
+            return;
+        RadioCmd radio = radioCmd();
+        ModalMapping input = event.getValue(RadioCmd.SEARCH_INPUT);
+        String query = input == null ? "" : input.getAsString().trim();
+        if (radio == null || query.isEmpty()) {
+            event.reply("Type a station name or genre to search for.").setEphemeral(true).queue();
+            return;
+        }
+        // Results are only for the searcher; picking one plays it for everyone
+        event.deferReply(true).queue();
+        CompletableFuture.supplyAsync(() -> radio.search(query)).thenAccept(stations -> showResults(event,
+                "\uD83D\uDD0E Stations for \"" + truncate(query, 60) + "\"", stations,
+                "No stations found for **" + FormatUtil.filter(query) + "**. Try another name or a genre like `jazz`."));
+    }
+
+    private void showResults(IReplyCallback event, String title, List<RadioBrowser.Station> stations, String emptyMessage) {
+        RadioCmd radio = radioCmd();
+        if (stations.isEmpty() || radio == null)
+            event.getHook().editOriginal(emptyMessage).queue();
+        else
+            event.getHook().editOriginal(MessageEditData.fromCreateData(radio.results(title, stations))).queue();
+    }
+
+    /** Plays a station picked from the radio UI, replying publicly with its card. */
+    private void runRadio(IReplyCallback event, String args) {
+        RadioCmd radio = radioCmd();
+        if (radio == null)
+            return;
+        event.deferReply().queue();
+        InteractionCommandEvent commandEvent = new InteractionCommandEvent(event, args, client, false);
+        try {
+            radio.run(commandEvent);
+        } catch (Exception e) {
+            LOG.error("Radio interaction failed", e);
+            commandEvent.replyError("Something went wrong.");
+        }
+        commandEvent.cleanUpIfUnanswered();
     }
 
     private String queueText(Guild guild, AudioHandler handler) {

@@ -68,7 +68,7 @@ public class RadioMetadata {
         return t;
     });
 
-    private final Map<String, Station> stationsByUrl = new ConcurrentHashMap<>();
+    private final Map<String, StationInfo> stationsByUrl = new ConcurrentHashMap<>();
     private final Map<String, String> titleByUrl = new ConcurrentHashMap<>();
     private final Map<String, String> artByUrl = new ConcurrentHashMap<>();
     private final Map<Long, ScheduledFuture<?>> pollByGuild = new ConcurrentHashMap<>();
@@ -77,15 +77,21 @@ public class RadioMetadata {
     private record Song(String title, String art) {
     }
 
-    private static class Station {
-        final String name;
-        final String livemetaUrl; // null = read ICY metadata from the stream
-        final String logo; // station logo, used when there is no song art
-
-        Station(String name, String livemetaUrl, String logo) {
-            this.name = name;
-            this.livemetaUrl = livemetaUrl;
-            this.logo = logo;
+    /**
+     * What the bot knows about a station. Only name is required.
+     *
+     * @param livemetaUrl Radio France livemeta feed for song titles; null reads
+     *                    ICY metadata from the stream instead
+     * @param logo        station logo, used when there is no song art
+     * @param format      e.g. "AAC · 192 kbps"
+     * @param origin      e.g. "🇫🇷 France"
+     * @param genre       e.g. "Jazz" or "indie, alternative"
+     * @param homepage    the station's website
+     */
+    public record StationInfo(String name, String livemetaUrl, String logo, String format,
+                              String origin, String genre, String homepage) {
+        public StationInfo withLogo(String newLogo) {
+            return new StationInfo(name, livemetaUrl, newLogo, format, origin, genre, homepage);
         }
     }
 
@@ -93,14 +99,24 @@ public class RadioMetadata {
         this.bot = bot;
     }
 
-    public void register(String streamUrl, String name, String livemetaUrl, String logo) {
-        stationsByUrl.put(streamUrl, new Station(name, livemetaUrl, logo));
+    public void register(String streamUrl, StationInfo info) {
+        stationsByUrl.put(streamUrl, info);
+    }
+
+    /** Fills in a logo found later (curated stations look theirs up in the background). */
+    public void setLogoIfMissing(String streamUrl, String logo) {
+        stationsByUrl.computeIfPresent(streamUrl, (url, info) -> info.logo() == null ? info.withLogo(logo) : info);
+    }
+
+    /** The station this track is, or null if it isn't a registered radio station. */
+    public StationInfo getStation(AudioTrack track) {
+        return track == null ? null : stationsByUrl.get(track.getInfo().uri);
     }
 
     /** Station display name if this track is a registered radio station, else null. */
     public String getStationName(AudioTrack track) {
-        Station s = track == null ? null : stationsByUrl.get(track.getInfo().uri);
-        return s == null ? null : s.name;
+        StationInfo s = getStation(track);
+        return s == null ? null : s.name();
     }
 
     /** True if this track is one of the ?radio stations. */
@@ -120,8 +136,8 @@ public class RadioMetadata {
         String art = artByUrl.get(track.getInfo().uri);
         if (art != null)
             return art;
-        Station s = stationsByUrl.get(track.getInfo().uri);
-        return s == null ? null : s.logo;
+        StationInfo s = stationsByUrl.get(track.getInfo().uri);
+        return s == null ? null : s.logo();
     }
 
     /** Status/now-playing label, e.g. "📻 ZM · Artist - Title", or null if not a radio station. */
@@ -171,9 +187,9 @@ public class RadioMetadata {
                 stop(guildId);
                 return;
             }
-            Station station = stationsByUrl.get(streamUrl);
-            Song fetched = station.livemetaUrl != null
-                    ? fetchRadioFrance(station.livemetaUrl)
+            StationInfo station = stationsByUrl.get(streamUrl);
+            Song fetched = station.livemetaUrl() != null
+                    ? fetchRadioFrance(station.livemetaUrl())
                     : new Song(fetchIcy(streamUrl), null);
             String song = fetched == null ? null : fetched.title();
             if (Objects.equals(song, titleByUrl.get(streamUrl))) {
@@ -189,11 +205,14 @@ public class RadioMetadata {
             } else {
                 artByUrl.put(streamUrl, fetched.art());
             }
-            LOG.info("{} now playing: {}", station.name, song == null ? "(no title)" : song);
+            LOG.info("{} now playing: {}", station.name(), song == null ? "(no title)" : song);
             // The station may have been stopped while we were fetching
             AudioTrack track = playingTrack(guildId);
             if (track != null && streamUrl.equals(track.getInfo().uri)) {
-                bot.getNowplayingHandler().onTrackUpdate(bot.getJDA().getGuildById(guildId), track);
+                Guild guild = bot.getJDA().getGuildById(guildId);
+                bot.getNowplayingHandler().onTrackUpdate(guild, track);
+                if (guild != null)
+                    bot.getPlayerControls().refreshRadioCard(guild);
             }
         } catch (Exception e) {
             LOG.debug("Radio metadata poll failed for {}", streamUrl, e);
