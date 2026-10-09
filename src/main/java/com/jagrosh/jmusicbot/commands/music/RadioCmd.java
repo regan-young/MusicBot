@@ -90,6 +90,14 @@ public class RadioCmd extends MusicCommand {
         addStation(key, displayName, url, null);
     }
 
+    /** Station key -> display name, sorted by key, for /radio autocomplete. */
+    public Map<String, String> getStationChoices() {
+        Map<String, String> choices = new java.util.LinkedHashMap<>();
+        for (String key : sortedStationKeys)
+            choices.put(key, stationDisplayNames.get(key));
+        return choices;
+    }
+
     private void addStation(String key, String displayName, String url, String livemetaUrl) {
         stations.put(key, url);
         stationDisplayNames.put(key, displayName);
@@ -120,8 +128,10 @@ public class RadioCmd extends MusicCommand {
                         // as the stream starts and whenever the poller sees a new song
                         bot.getRadioMetadata().start(event.getGuild().getIdLong(), url);
 
-                        m.editMessage(FormatUtil.filter(event.getClient().getSuccess() + " Now playing **"
-                                + displayName + "** \uD83D\uDCFB")).queue();
+                        m.editMessage(bot.getPlayerControls().edit(event.getGuild(),
+                                FormatUtil.filter(event.getClient().getSuccess() + " Now playing **"
+                                        + displayName + "** \uD83D\uDCFB"), track))
+                                .queue(bot.getPlayerControls()::register);
                     }
 
                     @Override

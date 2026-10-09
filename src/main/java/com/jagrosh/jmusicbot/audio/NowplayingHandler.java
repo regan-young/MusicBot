@@ -27,6 +27,10 @@ import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Activity;
 import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.GuildVoiceState;
+import net.dv8tion.jda.api.entities.channel.attribute.IVoiceStatusChannel;
+import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
+import net.dv8tion.jda.api.entities.channel.unions.AudioChannelUnion;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.exceptions.PermissionException;
@@ -45,6 +49,8 @@ public class NowplayingHandler {
     private static final Logger LOG = LoggerFactory.getLogger(NowplayingHandler.class);
     // Written from JDA threads while the scheduler iterates it
     private final Map<Long, Pair<Long, Long>> lastNP; // guild -> channel,message
+    private final Map<Long, String> voiceStatus = new ConcurrentHashMap<>(); // guild -> status last set
+    private final Set<Long> warnedNoStatusPermission = ConcurrentHashMap.newKeySet();
 
     public NowplayingHandler(Bot bot) {
         this.bot = bot;
@@ -52,8 +58,7 @@ public class NowplayingHandler {
     }
 
     public void init() {
-        if (!bot.getConfig().useNPImages())
-            bot.getThreadpool().scheduleWithFixedDelay(() -> {
+        bot.getThreadpool().scheduleWithFixedDelay(() -> {
                 // An exception escaping a scheduled task cancels all future runs
                 try {
                     updateAll();
@@ -69,6 +74,13 @@ public class NowplayingHandler {
             TextChannel tc = (TextChannel) channel;
             lastNP.put(m.getGuild().getIdLong(), new Pair<>(tc.getIdLong(), m.getIdLong()));
         }
+    }
+
+    /** The player buttons moved to another message: stop refreshing an older ?np (which would restore its buttons). */
+    public void onControlsMoved(Guild guild, long messageId) {
+        Pair<Long, Long> pair = lastNP.get(guild.getIdLong());
+        if (pair != null && pair.getValue() != messageId)
+            lastNP.remove(guild.getIdLong());
     }
 
     public void clearLastNPMessage(Guild guild) {
@@ -110,7 +122,63 @@ public class NowplayingHandler {
     }
 
     // "event"-based methods
-    public void onTrackUpdate(AudioTrack track) {
+    public void onTrackUpdate(Guild guild, AudioTrack track) {
+        if (guild != null) {
+            updateVoiceStatus(guild, track, true);
+            if (track == null)
+                bot.getPlayerControls().strip(guild);
+        }
+        updatePresence(track);
+    }
+
+    /** "🎵 Artist - Title" or "📻 Station · Artist - Title". */
+    private String statusText(AudioTrack track) {
+        String radio = bot.getRadioMetadata().getLabel(track);
+        if (radio != null)
+            return radio;
+        String title = track.getInfo().title;
+        return "\uD83C\uDFB5 " + (title == null || title.isBlank() ? "Music" : title);
+    }
+
+    /**
+     * Shows the current song as the voice channel's status (the line under its
+     * name). Unlike the bot's own status this is per guild. Needs the "Set
+     * Voice Channel Status" permission.
+     */
+    private void updateVoiceStatus(Guild guild, AudioTrack track, boolean retryIfConnecting) {
+        GuildVoiceState vs = guild.getSelfMember().getVoiceState();
+        AudioChannelUnion channel = vs == null ? null : vs.getChannel();
+        if (channel == null && track != null && retryIfConnecting) {
+            // The first song starts while the voice connection is still being made
+            bot.getThreadpool().schedule(() -> {
+                AudioHandler handler = (AudioHandler) guild.getAudioManager().getSendingHandler();
+                AudioTrack now = handler == null ? null : handler.getPlayer().getPlayingTrack();
+                if (now != null)
+                    updateVoiceStatus(guild, now, false);
+            }, 5, TimeUnit.SECONDS);
+            return;
+        }
+        if (!(channel instanceof VoiceChannel))
+            return;
+        VoiceChannel vc = (VoiceChannel) channel;
+        String status = track == null ? "" : statusText(track);
+        if (status.length() > IVoiceStatusChannel.MAX_STATUS_LENGTH)
+            status = status.substring(0, IVoiceStatusChannel.MAX_STATUS_LENGTH - 1) + "\u2026";
+        if (status.equals(voiceStatus.get(guild.getIdLong())))
+            return;
+        if (!guild.getSelfMember().hasPermission(vc, Permission.VOICE_SET_STATUS)) {
+            if (warnedNoStatusPermission.add(guild.getIdLong()))
+                LOG.warn("No \"Set Voice Channel Status\" permission in {}; not showing songs in the voice channel status", guild.getName());
+            return;
+        }
+        voiceStatus.put(guild.getIdLong(), status);
+        vc.modifyStatus(status).queue(null, t -> {
+            voiceStatus.remove(guild.getIdLong());
+            LOG.debug("Could not set voice channel status in {}", guild.getName(), t);
+        });
+    }
+
+    private void updatePresence(AudioTrack track) {
         // update bot status if applicable
         if (bot.getConfig().getSongInStatus()) {
             if (track != null && bot.getJDA().getGuilds().stream()

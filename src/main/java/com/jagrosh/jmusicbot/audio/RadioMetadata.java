@@ -70,7 +70,12 @@ public class RadioMetadata {
 
     private final Map<String, Station> stationsByUrl = new ConcurrentHashMap<>();
     private final Map<String, String> titleByUrl = new ConcurrentHashMap<>();
+    private final Map<String, String> artByUrl = new ConcurrentHashMap<>();
     private final Map<Long, ScheduledFuture<?>> pollByGuild = new ConcurrentHashMap<>();
+
+    /** A song as a station reports it; art is null for ICY stations. */
+    private record Song(String title, String art) {
+    }
 
     private static class Station {
         final String name;
@@ -104,6 +109,11 @@ public class RadioMetadata {
     /** Current song on this track's station, or null if unknown. */
     public String getSongTitle(AudioTrack track) {
         return track == null ? null : titleByUrl.get(track.getInfo().uri);
+    }
+
+    /** Cover art for the current song on this track's station, or null. */
+    public String getSongArt(AudioTrack track) {
+        return track == null ? null : artByUrl.get(track.getInfo().uri);
     }
 
     /** Status/now-playing label, e.g. "📻 ZM · Artist - Title", or null if not a radio station. */
@@ -154,9 +164,10 @@ public class RadioMetadata {
                 return;
             }
             Station station = stationsByUrl.get(streamUrl);
-            String song = station.livemetaUrl != null
+            Song fetched = station.livemetaUrl != null
                     ? fetchRadioFrance(station.livemetaUrl)
-                    : fetchIcy(streamUrl);
+                    : new Song(fetchIcy(streamUrl), null);
+            String song = fetched == null ? null : fetched.title();
             if (Objects.equals(song, titleByUrl.get(streamUrl))) {
                 return;
             }
@@ -165,11 +176,16 @@ public class RadioMetadata {
             } else {
                 titleByUrl.put(streamUrl, song);
             }
+            if (fetched == null || fetched.art() == null) {
+                artByUrl.remove(streamUrl);
+            } else {
+                artByUrl.put(streamUrl, fetched.art());
+            }
             LOG.info("{} now playing: {}", station.name, song == null ? "(no title)" : song);
             // The station may have been stopped while we were fetching
             AudioTrack track = playingTrack(guildId);
             if (track != null && streamUrl.equals(track.getInfo().uri)) {
-                bot.getNowplayingHandler().onTrackUpdate(track);
+                bot.getNowplayingHandler().onTrackUpdate(bot.getJDA().getGuildById(guildId), track);
             }
         } catch (Exception e) {
             LOG.debug("Radio metadata poll failed for {}", streamUrl, e);
@@ -198,7 +214,7 @@ public class RadioMetadata {
         }
     }
 
-    private String fetchRadioFrance(String livemetaUrl) throws Exception {
+    private Song fetchRadioFrance(String livemetaUrl) throws Exception {
         Request req = new Request.Builder().url(livemetaUrl).header("User-Agent", "Mozilla/5.0").build();
         try (Response resp = http.newCall(req).execute()) {
             if (!resp.isSuccessful()) {
@@ -223,7 +239,9 @@ public class RadioMetadata {
                     }
                 }
                 String artist = artists.isEmpty() ? step.optString("authors", "") : String.join(", ", artists);
-                return clean(artist.isBlank() ? step.optString("title") : artist + " - " + step.optString("title"));
+                String title = clean(artist.isBlank() ? step.optString("title") : artist + " - " + step.optString("title"));
+                String art = step.optString("visual", step.optString("visuelYoutube", ""));
+                return new Song(title, art.isBlank() ? null : art);
             }
             return null;
         }

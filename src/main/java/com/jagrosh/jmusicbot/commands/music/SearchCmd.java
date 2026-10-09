@@ -95,9 +95,9 @@ public class SearchCmd extends MusicCommand
             }
             AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
             int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)))+1;
-            m.editMessage(FormatUtil.filter(event.getClient().getSuccess()+" Added **"+track.getInfo().title
+            m.editMessage(bot.getPlayerControls().edit(event.getGuild(), FormatUtil.filter(event.getClient().getSuccess()+" Added **"+track.getInfo().title
                     +"** (`"+ TimeUtil.formatTime(track.getDuration())+"`) "+(pos==0 ? "to begin playing"
-                        : " to the queue at position "+pos))).queue();
+                        : " to the queue at position "+pos)), track)).queue(bot.getPlayerControls()::register);
         }
 
         @Override
@@ -117,9 +117,10 @@ public class SearchCmd extends MusicCommand
                         }
                         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
                         int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)))+1;
-                        event.replySuccess("Added **" + FormatUtil.filter(track.getInfo().title)
+                        event.reply(bot.getPlayerControls().message(event.getGuild(), event.getClient().getSuccess()
+                                + " Added **" + FormatUtil.filter(track.getInfo().title)
                                 + "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) " + (pos==0 ? "to begin playing" 
-                                    : " to the queue at position "+pos));
+                                    : " to the queue at position "+pos), track), bot.getPlayerControls()::register);
                     })
                     .setCancel((msg) -> {})
                     .setUsers(event.getAuthor())

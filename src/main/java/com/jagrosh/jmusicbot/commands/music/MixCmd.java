@@ -20,6 +20,7 @@ import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
+import com.jagrosh.jmusicbot.audio.TrackArt;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
@@ -27,8 +28,6 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import net.dv8tion.jda.api.entities.Message;
 
@@ -40,11 +39,6 @@ import net.dv8tion.jda.api.entities.Message;
  * @author Regan Young
  */
 public class MixCmd extends MusicCommand {
-    // A YouTube video id, either bare or inside a watch/youtu.be/shorts URL.
-    private final static Pattern VIDEO_ID = Pattern.compile(
-            "(?:v=|youtu\\.be/|/shorts/|/embed/)([A-Za-z0-9_-]{11})");
-    private final static Pattern BARE_ID = Pattern.compile("^[A-Za-z0-9_-]{11}$");
-
     private final String loadingEmoji;
 
     public MixCmd(Bot bot) {
@@ -73,7 +67,7 @@ public class MixCmd extends MusicCommand {
                         + "Usage: `" + event.getClient().getPrefix() + name + " " + arguments + "`");
                 return;
             }
-            String id = extractVideoId(playing);
+            String id = TrackArt.youtubeId(playing);
             if (id == null) {
                 event.replyError("**" + playing.getInfo().title + "** isn't a YouTube track, so I can't build a mix from it.");
                 return;
@@ -84,7 +78,7 @@ public class MixCmd extends MusicCommand {
         }
 
         // An explicit id or URL can skip the search entirely.
-        String direct = extractVideoId(args);
+        String direct = TrackArt.youtubeId(args);
         if (direct != null) {
             event.reply(loadingEmoji + " Building a mix... `[" + args + "]`",
                     m -> loadMix(event, m, direct, null));
@@ -110,7 +104,7 @@ public class MixCmd extends MusicCommand {
         }
 
         private void seed(AudioTrack track) {
-            String id = extractVideoId(track);
+            String id = TrackArt.youtubeId(track);
             if (id == null) {
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()
                         + " Couldn't work out a YouTube id for **" + track.getInfo().title + "**.")).queue();
@@ -171,6 +165,7 @@ public class MixCmd extends MusicCommand {
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
             int wanted = bot.getConfig().getMixSongs();
             int added = 0, skippedLong = 0;
+            AudioTrack firstAdded = null;
             StringBuilder list = new StringBuilder();
 
             for (AudioTrack track : playlist.getTracks()) {
@@ -178,13 +173,15 @@ public class MixCmd extends MusicCommand {
                     break;
                 // The mix always leads with the seed itself; the user asked for
                 // songs *like* it, so leave it out.
-                if (seedId.equals(extractVideoId(track)))
+                if (seedId.equals(TrackArt.youtubeId(track)))
                     continue;
                 if (bot.getConfig().isTooLong(track)) {
                     skippedLong++;
                     continue;
                 }
                 handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
+                if (firstAdded == null)
+                    firstAdded = track;
                 added++;
                 list.append("\n`").append(added).append(".` ").append(track.getInfo().title);
             }
@@ -197,11 +194,11 @@ public class MixCmd extends MusicCommand {
                 return;
             }
 
-            m.editMessage(FormatUtil.filter(event.getClient().getSuccess() + " Queued **" + added + "** songs like "
+            m.editMessage(bot.getPlayerControls().edit(event.getGuild(), FormatUtil.filter(event.getClient().getSuccess() + " Queued **" + added + "** songs like "
                     + (seedTitle == null ? "that" : "**" + seedTitle + "**") + ":" + list
                     + (skippedLong > 0 ? "\n" + event.getClient().getWarning() + " Skipped " + skippedLong
-                            + " track(s) longer than `" + bot.getConfig().getMaxTime() + "`." : "")))
-                    .queue();
+                            + " track(s) longer than `" + bot.getConfig().getMaxTime() + "`." : "")), firstAdded))
+                    .queue(bot.getPlayerControls()::register);
         }
 
         @Override
@@ -222,19 +219,5 @@ public class MixCmd extends MusicCommand {
             m.editMessage(FormatUtil.filter(event.getClient().getError()
                     + " Couldn't load that mix: " + throwable.getMessage())).queue();
         }
-    }
-
-    private static String extractVideoId(AudioTrack track) {
-        String fromIdentifier = extractVideoId(track.getInfo().identifier);
-        return fromIdentifier != null ? fromIdentifier : extractVideoId(track.getInfo().uri);
-    }
-
-    private static String extractVideoId(String s) {
-        if (s == null || s.isEmpty())
-            return null;
-        if (BARE_ID.matcher(s).matches())
-            return s;
-        Matcher matcher = VIDEO_ID.matcher(s);
-        return matcher.find() ? matcher.group(1) : null;
     }
 }

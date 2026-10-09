@@ -21,6 +21,7 @@ import com.jagrosh.jdautilities.commons.waiter.EventWaiter;
 import com.jagrosh.jmusicbot.audio.AloneInVoiceHandler;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.NowplayingHandler;
+import com.jagrosh.jmusicbot.audio.PlayerControls;
 import com.jagrosh.jmusicbot.audio.RadioMetadata;
 import com.jagrosh.jmusicbot.audio.PlayerManager;
 import com.jagrosh.jmusicbot.gui.GUI;
@@ -46,6 +47,7 @@ public class Bot
     private final NowplayingHandler nowplaying;
     private final RadioMetadata radioMetadata;
     private final AloneInVoiceHandler aloneInVoiceHandler;
+    private final PlayerControls playerControls;
     
     private boolean shuttingDown = false;
     private JDA jda;
@@ -65,6 +67,7 @@ public class Bot
         this.radioMetadata = new RadioMetadata(this);
         this.aloneInVoiceHandler = new AloneInVoiceHandler(this);
         this.aloneInVoiceHandler.init();
+        this.playerControls = new PlayerControls(this);
     }
     
     public BotConfig getConfig()
@@ -105,6 +108,11 @@ public class Bot
     public RadioMetadata getRadioMetadata()
     {
         return radioMetadata;
+    }
+
+    public PlayerControls getPlayerControls()
+    {
+        return playerControls;
     }
 
     public AloneInVoiceHandler getAloneInVoiceHandler()

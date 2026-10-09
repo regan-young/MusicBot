@@ -52,7 +52,7 @@ public class PlaynextCmd extends DJCommand
     @Override
     public void doCommand(CommandEvent event)
     {
-        if(event.getArgs().isEmpty() && event.getMessage().getAttachments().isEmpty())
+        if(event.getArgs().isEmpty() && (event.getMessage() == null || event.getMessage().getAttachments().isEmpty()))
         {
             event.replyWarning("Please include a song title or URL!");
             return;
@@ -88,7 +88,8 @@ public class PlaynextCmd extends DJCommand
             int pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)))+1;
             String addMsg = FormatUtil.filter(event.getClient().getSuccess()+" Added **"+track.getInfo().title
                     +"** (`"+ TimeUtil.formatTime(track.getDuration())+"`) "+(pos==0?"to begin playing":" to the queue at position "+pos));
-            m.editMessage(addMsg).queue();
+            m.editMessage(bot.getPlayerControls().edit(event.getGuild(), addMsg, track))
+                    .queue(bot.getPlayerControls()::register);
         }
         
         @Override

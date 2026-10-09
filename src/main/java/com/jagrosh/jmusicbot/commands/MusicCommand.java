@@ -48,12 +48,16 @@ public abstract class MusicCommand extends Command
     {
         Settings settings = event.getClient().getSettingsFor(event.getGuild());
         TextChannel tchannel = settings.getTextChannel(event.getGuild());
-        if(tchannel!=null && !event.getTextChannel().equals(tchannel))
+        if(tchannel!=null && !tchannel.equals(event.getGuildChannel()))
         {
-            try 
+            // slash commands and buttons have no message to delete
+            if(event.getMessage() != null)
             {
-                event.getMessage().delete().queue();
-            } catch(PermissionException ignore){}
+                try
+                {
+                    event.getMessage().delete().queue();
+                } catch(PermissionException ignore){}
+            }
             event.replyInDm(event.getClient().getError()+" You can only use that command in "+tchannel.getAsMention()+"!");
             return;
         }

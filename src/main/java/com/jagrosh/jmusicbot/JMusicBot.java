@@ -19,6 +19,7 @@ import com.jagrosh.jdautilities.command.CommandClient;
 import com.jagrosh.jdautilities.command.CommandClientBuilder;
 import com.jagrosh.jdautilities.commons.waiter.EventWaiter;
 import com.jagrosh.jdautilities.examples.command.*;
+import com.jagrosh.jmusicbot.commands.HelpMessage;
 import com.jagrosh.jmusicbot.commands.admin.*;
 import com.jagrosh.jmusicbot.commands.dj.*;
 import com.jagrosh.jmusicbot.commands.general.*;
@@ -51,7 +52,8 @@ public class JMusicBot {
             Permission.MESSAGE_HISTORY, Permission.MESSAGE_ADD_REACTION,
             Permission.MESSAGE_EMBED_LINKS, Permission.MESSAGE_ATTACH_FILES, Permission.MESSAGE_MANAGE,
             Permission.MESSAGE_EXT_EMOJI,
-            Permission.VOICE_CONNECT, Permission.VOICE_SPEAK, Permission.NICKNAME_CHANGE };
+            Permission.VOICE_CONNECT, Permission.VOICE_SPEAK, Permission.NICKNAME_CHANGE,
+            Permission.VOICE_SET_STATUS };
     public final static GatewayIntent[] INTENTS = { GatewayIntent.DIRECT_MESSAGES, GatewayIntent.GUILD_MESSAGES,
             GatewayIntent.GUILD_MESSAGE_REACTIONS, GatewayIntent.GUILD_VOICE_STATES };
 
@@ -120,7 +122,7 @@ public class JMusicBot {
                             config.getStatus() == OnlineStatus.INVISIBLE || config.getStatus() == OnlineStatus.OFFLINE
                                     ? OnlineStatus.INVISIBLE
                                     : OnlineStatus.DO_NOT_DISTURB)
-                    .addEventListeners(client, waiter, new Listener(bot))
+                    .addEventListeners(client, waiter, new Listener(bot), new InteractionListener(bot, client))
                     .setBulkDeleteSplittingEnabled(true)
                     // Discord rejects voice connections without DAVE (close code
                     // 4017) since 2026-03-02. JDA only supplies the interface.
@@ -178,6 +180,10 @@ public class JMusicBot {
                 .setOwnerId(Long.toString(config.getOwnerId()))
                 .setEmojis(config.getSuccess(), config.getWarning(), config.getError())
                 .setHelpWord(config.getHelp())
+                .setHelpConsumer(HelpMessage::reply)
+                // InteractionListener registers the slash commands; without this,
+                // chewtils would overwrite them with its own (empty) list on ready
+                .setManualUpsert(true)
                 .setLinkedCacheSize(200)
                 .setGuildSettingsManager(settings)
                 .addCommands(aboutCommand,

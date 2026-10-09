@@ -61,7 +61,9 @@ public class PlayCmd extends MusicCommand {
 
     @Override
     public void doCommand(CommandEvent event) {
-        if (event.getArgs().isEmpty() && event.getMessage().getAttachments().isEmpty()) {
+        // slash commands have no message; /play passes an attachment as its URL
+        boolean noAttachment = event.getMessage() == null || event.getMessage().getAttachments().isEmpty();
+        if (event.getArgs().isEmpty() && noAttachment) {
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
             if (handler.getPlayer().getPlayingTrack() != null && handler.getPlayer().isPaused()) {
                 if (DJCommand.checkDJPermission(event)) {
@@ -115,8 +117,9 @@ public class PlayCmd extends MusicCommand {
                     + "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) "
                     + (pos == 0 ? "to begin playing" : " to the queue at position " + pos));
             if (playlist == null
-                    || !event.getSelfMember().hasPermission(event.getTextChannel(), Permission.MESSAGE_ADD_REACTION))
-                m.editMessage(addMsg).queue();
+                    || !event.getSelfMember().hasPermission(event.getGuildChannel(), Permission.MESSAGE_ADD_REACTION))
+                m.editMessage(bot.getPlayerControls().edit(event.getGuild(), addMsg, track))
+                        .queue(bot.getPlayerControls()::register);
             else {
                 new ButtonMenu.Builder()
                         .setText(addMsg + "\n" + event.getClient().getWarning() + " This track has a playlist of **"
@@ -136,6 +139,8 @@ public class PlayCmd extends MusicCommand {
                                 m.clearReactions().queue();
                             } catch (PermissionException ignore) {
                             }
+                            m.editMessage(bot.getPlayerControls().edit(event.getGuild(), addMsg, track))
+                                    .queue(bot.getPlayerControls()::register);
                         }).build().display(m);
             }
         }
@@ -184,14 +189,15 @@ public class PlayCmd extends MusicCommand {
                                             + "**) ")
                             + "were longer than the allowed maximum (`" + bot.getConfig().getMaxTime() + "`)")).queue();
                 } else {
-                    m.editMessage(FormatUtil.filter(event.getClient().getSuccess() + " Found "
+                    m.editMessage(bot.getPlayerControls().edit(event.getGuild(), FormatUtil.filter(event.getClient().getSuccess() + " Found "
                             + (playlist.getName() == null ? "a playlist" : "playlist **" + playlist.getName() + "**")
                             + " with `"
                             + playlist.getTracks().size() + "` entries; added to the queue!"
                             + (count < playlist.getTracks().size() ? "\n" + event.getClient().getWarning()
                                     + " Tracks longer than the allowed maximum (`"
-                                    + bot.getConfig().getMaxTime() + "`) have been omitted." : "")))
-                            .queue();
+                                    + bot.getConfig().getMaxTime() + "`) have been omitted." : "")),
+                            playlist.getTracks().get(0)))
+                            .queue(bot.getPlayerControls()::register);
                 }
             }
         }

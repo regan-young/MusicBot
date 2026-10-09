@@ -50,7 +50,10 @@ public class NowplayingCmd extends MusicCommand
         }
         else
         {
-            event.reply(m, msg -> bot.getNowplayingHandler().setLastNPMessage(msg));
+            event.reply(m, msg -> {
+                bot.getNowplayingHandler().setLastNPMessage(msg);
+                bot.getPlayerControls().register(msg);
+            });
         }
     }
 }
