@@ -106,10 +106,12 @@ public class NowplayingHandler {
                         var vs = g.getSelfMember().getVoiceState();
                         return vs != null && vs.getChannel() != null;
                     }).count() <= 1) {
-                String title = track.getInfo().title;
+                String title = bot.getRadioMetadata().getLabel(track);
+                if (title == null)
+                    title = track.getInfo().title;
                 if (title == null || title.isBlank() || title.equalsIgnoreCase("Unspecified description"))
                     title = "Radio";
-                bot.getJDA().getPresence().setActivity(Activity.listening(title));
+                bot.getJDA().getPresence().setActivity(Activity.listening(title.length() > 128 ? title.substring(0, 127) + "\u2026" : title));
             } else
                 bot.resetGame();
         }

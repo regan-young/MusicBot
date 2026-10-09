@@ -237,9 +237,10 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                     eb.setAuthor(FormatUtil.formatUsername(u), null, u.getEffectiveAvatarUrl());
             }
 
+            String radioLabel = manager.getBot().getRadioMetadata().getLabel(track);
             try 
             {
-                eb.setTitle(track.getInfo().title, track.getInfo().uri);
+                eb.setTitle(radioLabel != null ? radioLabel : track.getInfo().title, track.getInfo().uri);
             }
             catch(Exception e) 
             {

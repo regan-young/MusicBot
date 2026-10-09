@@ -22,7 +22,6 @@ import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
-import net.dv8tion.jda.api.entities.Activity;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
@@ -78,15 +77,22 @@ public class RadioCmd extends MusicCommand {
         addStation("magic", "Magic", "https://mediaworks.streamguys1.com/magic_net_icy");
 
         // International
-        addStation("fip", "FIP", "https://icecast.radiofrance.fr/fip-midfi.mp3");
+        // No ICY metadata in Radio France streams; song titles come from livemeta (7 = FIP)
+        addStation("fip", "FIP", "https://icecast.radiofrance.fr/fip-midfi.mp3",
+                "https://api.radiofrance.fr/livemeta/pull/7");
 
         // Build sorted list for skip functionality
         this.sortedStationKeys = stations.keySet().stream().sorted().collect(Collectors.toList());
     }
 
     private void addStation(String key, String displayName, String url) {
+        addStation(key, displayName, url, null);
+    }
+
+    private void addStation(String key, String displayName, String url, String livemetaUrl) {
         stations.put(key, url);
         stationDisplayNames.put(key, displayName);
+        bot.getRadioMetadata().register(url, displayName, livemetaUrl);
     }
 
     /**
@@ -128,11 +134,9 @@ public class RadioCmd extends MusicCommand {
                         // Track which station is playing in this guild for skip
                         currentStationByGuild.put(event.getGuild().getIdLong(), stationKey);
 
-                        // Set bot status to show the station name
-                        if (bot.getConfig().getSongInStatus()) {
-                            event.getJDA().getPresence()
-                                    .setActivity(Activity.listening("\uD83D\uDCFB " + displayName));
-                        }
+                        // Bot status (station + current song) is set by NowplayingHandler
+                        // as the stream starts and whenever the poller sees a new song
+                        bot.getRadioMetadata().start(event.getGuild().getIdLong(), url);
 
                         m.editMessage(FormatUtil.filter(event.getClient().getSuccess() + " Now playing **"
                                 + displayName + "** \uD83D\uDCFB")).queue();
