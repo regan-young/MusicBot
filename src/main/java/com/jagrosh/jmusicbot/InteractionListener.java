@@ -35,6 +35,7 @@ import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.InteractionContextType;
+import net.dv8tion.jda.api.interactions.callbacks.IReplyCallback;
 import net.dv8tion.jda.api.interactions.commands.OptionMapping;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
@@ -55,9 +56,41 @@ import java.util.stream.Collectors;
  */
 public class InteractionListener extends ListenerAdapter {
     private static final Logger LOG = LoggerFactory.getLogger(InteractionListener.class);
-    // Slash commands with a named option instead of the generic "input"
-    private static final String PLAY_QUERY = "query", PLAY_FILE = "file", RADIO_STATION = "station",
-            MIX_SONG = "song", GENERIC_INPUT = "input";
+    /**
+     * The slash commands: the everyday ones only, each mirroring its ?command.
+     * The main argument comes first and is required where the command needs
+     * one, so whatever is typed after "/play " goes straight into it. Every
+     * other command stays prefix-only.
+     */
+    private static final List<Slash> SLASH = List.of(
+            new Slash("play", "play", "play a song or add it to the queue",
+                    new OptionData(OptionType.STRING, "song", "song title or URL", true)),
+            new Slash("radio", "radio", "play a radio station: NZ favourites or any station worldwide",
+                    new OptionData(OptionType.STRING, "station", "station name, or \"list\"", true).setAutoComplete(true)),
+            new Slash("mix", "mix", "queue songs like a song (or like what's playing)",
+                    new OptionData(OptionType.STRING, "song", "song to build the mix around", false)),
+            new Slash("skip", null, "skip the song (a vote, unless you're a DJ or requested it)", null),
+            new Slash("pause", null, "pause or resume", null),
+            new Slash("stop", "stop", "stop playing and clear the queue", null),
+            new Slash("queue", null, "what's playing and what's next", null),
+            new Slash("np", "nowplaying", "the current song, with controls", null),
+            new Slash("help", null, "what I can do", null));
+
+    /** A slash command; command is the ?command it runs (null: handled here). */
+    private record Slash(String name, String command, String description, OptionData option) {
+        SlashCommandData data() {
+            SlashCommandData data = Commands.slash(name, description).setContexts(InteractionContextType.GUILD);
+            return option == null ? data : data.addOptions(option);
+        }
+    }
+
+    /** "/np" for ?nowplaying etc.; null if the command is prefix-only. */
+    public static String slashFor(String commandName) {
+        for (Slash s : SLASH)
+            if (commandName.equals(s.command()) || (s.command() == null && commandName.equals(s.name())))
+                return "/" + s.name();
+        return null;
+    }
 
     private final Bot bot;
     private final CommandClient client;
@@ -71,45 +104,10 @@ public class InteractionListener extends ListenerAdapter {
 
     @Override
     public void onReady(@NotNull ReadyEvent event) {
-        List<SlashCommandData> data = new ArrayList<>();
-        for (Command command : client.getCommands()) {
-            if (command.isOwnerCommand() || command.isHidden())
-                continue;
-            data.add(slashData(command));
-        }
-        data.add(Commands.slash("help", "shows what I can do").setContexts(InteractionContextType.GUILD));
-        event.getJDA().updateCommands().addCommands(data).queue(
-                cmds -> LOG.info("Registered {} slash commands", cmds.size()),
-                t -> LOG.error("Could not register slash commands (is the applications.commands scope granted?)", t));
-    }
-
-    private SlashCommandData slashData(Command command) {
-        String help = command.getHelp() == null || command.getHelp().isBlank() ? command.getName() : command.getHelp();
-        SlashCommandData data = Commands.slash(command.getName(), truncate(help, 100))
-                .setContexts(InteractionContextType.GUILD);
-        switch (command.getName()) {
-            case "play":
-                data.addOptions(
-                        new OptionData(OptionType.STRING, PLAY_QUERY, "song title, URL, or \"playlist <name>\""),
-                        new OptionData(OptionType.ATTACHMENT, PLAY_FILE, "an audio file to play"));
-                break;
-            case "radio":
-                data.addOptions(new OptionData(OptionType.STRING, RADIO_STATION, "station name, list, or skip")
-                        .setAutoComplete(true));
-                break;
-            case "mix":
-                data.addOptions(new OptionData(OptionType.STRING, MIX_SONG,
-                        "song to build a mix around (default: what's playing)"));
-                break;
-            default:
-                if (command.getArguments() != null && !command.getArguments().isBlank())
-                    data.addOptions(new OptionData(OptionType.STRING, GENERIC_INPUT, truncate(command.getArguments(), 100)));
-        }
-        return data;
-    }
-
-    private static String truncate(String s, int max) {
-        return s.length() <= max ? s : s.substring(0, max - 1) + "…";
+        event.getJDA().updateCommands()
+                .addCommands(SLASH.stream().map(Slash::data).collect(Collectors.toList()))
+                .queue(cmds -> LOG.info("Registered {} slash commands", cmds.size()),
+                        t -> LOG.error("Could not register slash commands (is the applications.commands scope granted?)", t));
     }
 
     // ------------------------------------------------------------------ slash commands
@@ -120,18 +118,42 @@ public class InteractionListener extends ListenerAdapter {
             event.reply("I only work in servers.").setEphemeral(true).queue();
             return;
         }
+        Slash slash = SLASH.stream().filter(s -> s.name().equals(event.getName())).findFirst().orElse(null);
+        if (slash == null) {
+            event.reply("That command no longer exists.").setEphemeral(true).queue();
+            return;
+        }
+        Guild guild = event.getGuild();
+        AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
+        if (slash.name().equals("queue")) {
+            event.reply(queueText(guild, handler)).queue();
+            return;
+        }
+
         event.deferReply().queue();
-        InteractionCommandEvent commandEvent = new InteractionCommandEvent(event, slashArgs(event), client, false);
+        String args = "";
+        if (slash.option() != null) {
+            OptionMapping option = event.getOption(slash.option().getName());
+            if (option != null)
+                args = option.getAsString().trim();
+        }
+        String commandName = slash.command();
+        if (slash.name().equals("skip") || slash.name().equals("pause")) {
+            String[] resolved = playerCommand(slash.name(), event, handler, guild);
+            commandName = resolved[0];
+            args = resolved[1];
+        }
+
+        InteractionCommandEvent commandEvent = new InteractionCommandEvent(event, args, client, false);
         try {
-            if (event.getName().equals("help")) {
+            if (slash.name().equals("help")) {
                 HelpMessage.reply(commandEvent);
             } else {
-                Command command = findCommand(event.getName());
-                if (command == null) {
+                Command command = findCommand(commandName);
+                if (command == null)
                     commandEvent.replyError("That command no longer exists.");
-                    return;
-                }
-                command.run(commandEvent);
+                else
+                    command.run(commandEvent);
             }
         } catch (Exception e) {
             LOG.error("Slash command /{} failed", event.getName(), e);
@@ -140,40 +162,45 @@ public class InteractionListener extends ListenerAdapter {
         commandEvent.cleanUpIfUnanswered();
     }
 
-    private static String slashArgs(SlashCommandInteractionEvent event) {
-        String args = firstString(event, PLAY_QUERY, RADIO_STATION, MIX_SONG, GENERIC_INPUT);
-        if (args.isEmpty()) {
-            OptionMapping file = event.getOption(PLAY_FILE);
-            if (file != null)
-                args = file.getAsAttachment().getUrl();
+    /**
+     * The ?command (and its args) behind a player action shared by slash
+     * commands and buttons: pause toggles (?play with no args resumes), skip
+     * is immediate for DJs and a vote otherwise, repeat cycles off/all/single.
+     */
+    private String[] playerCommand(String action, IReplyCallback interaction, AudioHandler handler, Guild guild) {
+        switch (action) {
+            case "pause":
+                return new String[] { handler.getPlayer().isPaused() ? "play" : "pause", "" };
+            case "skip":
+                boolean dj = DJCommand.checkDJPermission(new InteractionCommandEvent(interaction, "", client, true));
+                return new String[] { dj ? "forceskip" : "skip", "" };
+            case "stop":
+                return new String[] { "stop", "" };
+            case "repeat":
+                RepeatMode mode = bot.getSettingsManager().getSettings(guild).getRepeatMode();
+                return new String[] { "repeat", mode == RepeatMode.OFF ? "all" : mode == RepeatMode.ALL ? "single" : "off" };
+            default:
+                return null;
         }
-        return args;
-    }
-
-    private static String firstString(SlashCommandInteractionEvent event, String... names) {
-        for (String name : names) {
-            OptionMapping option = event.getOption(name);
-            if (option != null)
-                return option.getAsString().trim();
-        }
-        return "";
     }
 
     @Override
     public void onCommandAutoCompleteInteraction(@NotNull CommandAutoCompleteInteractionEvent event) {
-        if (!event.getName().equals("radio") || !event.getFocusedOption().getName().equals(RADIO_STATION))
+        if (!event.getName().equals("radio") || !event.getFocusedOption().getName().equals("station"))
             return;
         Command command = findCommand("radio");
         if (!(command instanceof RadioCmd))
             return;
-        String typed = event.getFocusedOption().getValue().toLowerCase();
         List<net.dv8tion.jda.api.interactions.commands.Command.Choice> choices = ((RadioCmd) command)
-                .getStationChoices().entrySet().stream()
-                .filter(e -> e.getKey().contains(typed) || e.getValue().toLowerCase().contains(typed))
+                .autocomplete(event.getFocusedOption().getValue()).entrySet().stream()
                 .limit(25)
-                .map(e -> new net.dv8tion.jda.api.interactions.commands.Command.Choice(e.getValue(), e.getKey()))
+                .map(e -> new net.dv8tion.jda.api.interactions.commands.Command.Choice(truncate(e.getValue(), 100), e.getKey()))
                 .collect(Collectors.toList());
-        event.replyChoices(choices).queue();
+        event.replyChoices(choices).queue(null, t -> { });
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max - 1) + "…";
     }
 
     // ------------------------------------------------------------------ buttons
@@ -196,27 +223,9 @@ public class InteractionListener extends ListenerAdapter {
         bot.getPlayerControls().register(event.getMessage());
 
         event.deferReply(true).queue();
-        String commandName = null;
-        String args = "";
-        switch (id) {
-            case PlayerControls.PAUSE:
-                // ?play with no arguments resumes a paused player
-                commandName = handler.getPlayer().isPaused() ? "play" : "pause";
-                break;
-            case PlayerControls.SKIP:
-                // DJs skip outright; everyone else votes, as with ?skip
-                boolean dj = DJCommand.checkDJPermission(new InteractionCommandEvent(event, "", client, true));
-                commandName = dj ? "forceskip" : "skip";
-                break;
-            case PlayerControls.STOP:
-                commandName = "stop";
-                break;
-            case PlayerControls.REPEAT:
-                RepeatMode mode = bot.getSettingsManager().getSettings(guild).getRepeatMode();
-                commandName = "repeat";
-                args = mode == RepeatMode.OFF ? "all" : mode == RepeatMode.ALL ? "single" : "off";
-                break;
-        }
+        String[] resolved = playerCommand(id.substring(PlayerControls.ID_PREFIX.length()), event, handler, guild);
+        String commandName = resolved == null ? null : resolved[0];
+        String args = resolved == null ? "" : resolved[1];
         InteractionCommandEvent commandEvent = new InteractionCommandEvent(event, args, client, true);
         Command command = commandName == null ? null : findCommand(commandName);
         if (command == null) {

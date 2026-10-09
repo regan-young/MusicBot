@@ -17,6 +17,7 @@ package com.jagrosh.jmusicbot.commands;
 
 import com.jagrosh.jdautilities.command.Command;
 import com.jagrosh.jdautilities.command.CommandEvent;
+import com.jagrosh.jmusicbot.InteractionListener;
 import com.jagrosh.jmusicbot.settings.Settings;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.entities.MessageEmbed;
@@ -74,8 +75,8 @@ public final class HelpMessage {
 
         EmbedBuilder eb = new EmbedBuilder()
                 .setTitle(event.getSelfUser().getName() + " commands")
-                .setDescription("Type `" + prefix + "command` or `/command`. "
-                        + "The buttons on my replies pause, skip, stop and repeat whatever is playing.");
+                .setDescription("Type `" + prefix + "command`. The everyday ones are also slash commands (shown"
+                        + " after them). The buttons on my replies pause, skip, stop and repeat whatever is playing.");
         if (event.getSelfMember() != null)
             eb.setColor(event.getSelfMember().getColor());
         for (Map.Entry<String, List<String>> e : lines.entrySet()) {
@@ -89,7 +90,9 @@ public final class HelpMessage {
     private static String line(String prefix, String name, Command command) {
         String args = command.getArguments() == null || command.getArguments().isEmpty()
                 ? "" : " " + command.getArguments();
-        return "`" + prefix + name + args + "` — " + command.getHelp();
+        String slash = name.contains(" ") ? null : InteractionListener.slashFor(name);
+        return "`" + prefix + name + args + "`" + (slash == null ? "" : " · `" + slash + "`")
+                + " — " + command.getHelp();
     }
 
     /** Embed fields hold 1024 characters; continue long categories in untitled fields. */

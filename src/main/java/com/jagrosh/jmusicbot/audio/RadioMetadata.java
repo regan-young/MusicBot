@@ -80,10 +80,12 @@ public class RadioMetadata {
     private static class Station {
         final String name;
         final String livemetaUrl; // null = read ICY metadata from the stream
+        final String logo; // station logo, used when there is no song art
 
-        Station(String name, String livemetaUrl) {
+        Station(String name, String livemetaUrl, String logo) {
             this.name = name;
             this.livemetaUrl = livemetaUrl;
+            this.logo = logo;
         }
     }
 
@@ -91,8 +93,8 @@ public class RadioMetadata {
         this.bot = bot;
     }
 
-    public void register(String streamUrl, String name, String livemetaUrl) {
-        stationsByUrl.put(streamUrl, new Station(name, livemetaUrl));
+    public void register(String streamUrl, String name, String livemetaUrl, String logo) {
+        stationsByUrl.put(streamUrl, new Station(name, livemetaUrl, logo));
     }
 
     /** Station display name if this track is a registered radio station, else null. */
@@ -111,9 +113,15 @@ public class RadioMetadata {
         return track == null ? null : titleByUrl.get(track.getInfo().uri);
     }
 
-    /** Cover art for the current song on this track's station, or null. */
+    /** Cover art for the current song on this track's station, else the station logo, or null. */
     public String getSongArt(AudioTrack track) {
-        return track == null ? null : artByUrl.get(track.getInfo().uri);
+        if (track == null)
+            return null;
+        String art = artByUrl.get(track.getInfo().uri);
+        if (art != null)
+            return art;
+        Station s = stationsByUrl.get(track.getInfo().uri);
+        return s == null ? null : s.logo;
     }
 
     /** Status/now-playing label, e.g. "📻 ZM · Artist - Title", or null if not a radio station. */
