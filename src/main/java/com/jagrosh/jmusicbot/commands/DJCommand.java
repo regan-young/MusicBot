@@ -20,6 +20,10 @@ import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.settings.Settings;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Role;
+import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.GuildVoiceState;
+import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.channel.middleman.AudioChannel;
 
 /**
  *
@@ -30,7 +34,7 @@ public abstract class DJCommand extends MusicCommand
     public DJCommand(Bot bot)
     {
         super(bot);
-        this.category = new Category("DJ", "Only DJs (DJ role or Manage Server) can use that.", event -> checkDJPermission(event));
+        this.category = new Category("DJ", "Join my voice channel to use that.", event -> checkDJPermission(event));
     }
     
     public static boolean checkDJPermission(CommandEvent event)
@@ -43,6 +47,20 @@ public abstract class DJCommand extends MusicCommand
             return true;
         Settings settings = event.getClient().getSettingsFor(event.getGuild());
         Role dj = settings.getRole(event.getGuild());
-        return dj!=null && (event.getMember().getRoles().contains(dj) || dj.getIdLong()==event.getGuild().getIdLong());
+        if(dj!=null && (event.getMember().getRoles().contains(dj) || dj.getIdLong()==event.getGuild().getIdLong()))
+            return true;
+        // Anyone listening along can control playback: the bot's voice channel,
+        // or any voice channel when the bot isn't in one
+        return isListening(event.getMember(), event.getGuild());
+    }
+
+    private static boolean isListening(Member member, Guild guild)
+    {
+        GuildVoiceState state = member == null ? null : member.getVoiceState();
+        if(state == null || state.getChannel() == null || state.isDeafened())
+            return false;
+        GuildVoiceState self = guild.getSelfMember().getVoiceState();
+        AudioChannel botChannel = self == null ? null : self.getChannel();
+        return botChannel == null || botChannel.equals(state.getChannel());
     }
 }

@@ -38,7 +38,7 @@ public final class HelpMessage {
 
     static {
         CATEGORY_TITLES.put("Music", "🎵 Music");
-        CATEGORY_TITLES.put("DJ", "🎚️ DJ (DJ role or Manage Server)");
+        CATEGORY_TITLES.put("DJ", "🎚️ Playback (anyone in the voice channel)");
         CATEGORY_TITLES.put("General", "ℹ️ General");
         CATEGORY_TITLES.put("Admin", "🛠️ Admin (Manage Server)");
         CATEGORY_TITLES.put("Owner", "👑 Owner");
