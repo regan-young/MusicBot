@@ -20,11 +20,13 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.events.guild.voice.GuildVoiceUpdateEvent;
 
 import java.time.Instant;
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -33,7 +35,9 @@ import java.util.concurrent.TimeUnit;
 public class AloneInVoiceHandler
 {
     private final Bot bot;
-    private final HashMap<Long, Instant> aloneSince = new HashMap<>();
+    private static final Logger LOG = LoggerFactory.getLogger(AloneInVoiceHandler.class);
+    // Written from JDA threads while the scheduler iterates it
+    private final Map<Long, Instant> aloneSince = new ConcurrentHashMap<>();
     private long aloneTimeUntilStop = 0;
 
     public AloneInVoiceHandler(Bot bot)
@@ -45,7 +49,14 @@ public class AloneInVoiceHandler
     {
         aloneTimeUntilStop = bot.getConfig().getAloneTimeUntilStop();
         if(aloneTimeUntilStop > 0)
-            bot.getThreadpool().scheduleWithFixedDelay(() -> check(), 0, 5, TimeUnit.SECONDS);
+            bot.getThreadpool().scheduleWithFixedDelay(() -> {
+                // An exception escaping a scheduled task cancels all future runs
+                try {
+                    check();
+                } catch (Exception e) {
+                    LOG.warn("Alone-in-voice check failed", e);
+                }
+            }, 0, 5, TimeUnit.SECONDS);
     }
     
     private void check()

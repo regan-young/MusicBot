@@ -96,6 +96,11 @@ public class RadioMetadata {
         return s == null ? null : s.name;
     }
 
+    /** True if this track is one of the ?radio stations. */
+    public boolean isRadio(AudioTrack track) {
+        return getStationName(track) != null;
+    }
+
     /** Current song on this track's station, or null if unknown. */
     public String getSongTitle(AudioTrack track) {
         return track == null ? null : titleByUrl.get(track.getInfo().uri);

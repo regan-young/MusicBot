@@ -169,8 +169,6 @@ public class MixCmd extends MusicCommand {
         @Override
         public void playlistLoaded(AudioPlaylist playlist) {
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-            boolean wasRadio = RadioCmd.isRadioStream(handler);
-
             int wanted = bot.getConfig().getMixSongs();
             int added = 0, skippedLong = 0;
             StringBuilder list = new StringBuilder();
@@ -190,11 +188,6 @@ public class MixCmd extends MusicCommand {
                 added++;
                 list.append("\n`").append(added).append(".` ").append(track.getInfo().title);
             }
-
-            // Stop the radio only after queueing, so the track-end handler does
-            // not see an empty queue and disconnect.
-            if (wasRadio && added > 0)
-                handler.getPlayer().stopTrack();
 
             if (added == 0) {
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()

@@ -28,6 +28,7 @@ import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 
 import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -49,7 +50,7 @@ public class RadioCmd extends MusicCommand {
 
         this.stations = new HashMap<>();
         this.stationDisplayNames = new HashMap<>();
-        this.currentStationByGuild = new HashMap<>();
+        this.currentStationByGuild = new ConcurrentHashMap<>();
 
         // RNZ
         addStation("rnz", "RNZ", "http://radionz-ice.streamguys.com/national.mp3");
@@ -96,18 +97,6 @@ public class RadioCmd extends MusicCommand {
     }
 
     /**
-     * Checks if the currently playing track is a radio stream.
-     */
-    public static boolean isRadioStream(AudioHandler handler) {
-        if (handler == null || handler.getPlayer().getPlayingTrack() == null) {
-            return false;
-        }
-        String uri = handler.getPlayer().getPlayingTrack().getInfo().uri;
-        return uri != null && (uri.contains("streamguys") || uri.contains("streamtheworld")
-                || uri.contains("radiofrance"));
-    }
-
-    /**
      * Loads and plays a station, handling skip of current radio if needed.
      */
     private void loadStation(CommandEvent event, String stationKey) {
@@ -120,16 +109,9 @@ public class RadioCmd extends MusicCommand {
                         AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager()
                                 .getSendingHandler();
 
-                        boolean wasRadio = isRadioStream(handler);
-
-                        // Add the new track to the queue FIRST, then stop the radio.
-                        // If we stop first, onTrackEnd sees an empty queue and disconnects.
+                        // addTrack replaces a station that is already playing
                         handler.addTrack(
                                 new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
-
-                        if (wasRadio) {
-                            handler.getPlayer().stopTrack();
-                        }
 
                         // Track which station is playing in this guild for skip
                         currentStationByGuild.put(event.getGuild().getIdLong(), stationKey);
@@ -187,7 +169,7 @@ public class RadioCmd extends MusicCommand {
 
         if (args.equals("skip") || args.equals("next")) {
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-            if (!isRadioStream(handler)) {
+            if (handler == null || !bot.getRadioMetadata().isRadio(handler.getPlayer().getPlayingTrack())) {
                 event.replyError("No radio station is currently playing. Use `" + event.getClient().getPrefix() + name
                         + " <station name>` to start one.");
                 return;

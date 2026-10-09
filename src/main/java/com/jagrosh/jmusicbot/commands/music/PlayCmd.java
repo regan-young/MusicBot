@@ -110,13 +110,7 @@ public class PlayCmd extends MusicCommand {
                 return;
             }
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-            boolean wasRadio = RadioCmd.isRadioStream(handler);
             int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event))) + 1;
-            // Stop radio AFTER adding to queue, so onTrackEnd doesn't see empty queue and
-            // disconnect
-            if (wasRadio) {
-                handler.getPlayer().stopTrack();
-            }
             String addMsg = FormatUtil.filter(event.getClient().getSuccess() + " Added **" + track.getInfo().title
                     + "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) "
                     + (pos == 0 ? "to begin playing" : " to the queue at position " + pos));

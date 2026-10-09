@@ -86,11 +86,17 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             audioPlayer.playTrack(qtrack.getTrack());
             return -1;
         }
-        else
+        // A radio station never ends, so anything queued behind it would never
+        // play. Put the new track first and stop the station; onTrackEnd then
+        // starts it (the queue isn't empty, so the bot doesn't disconnect).
+        if(manager.getBot().getRadioMetadata().isRadio(audioPlayer.getPlayingTrack()))
         {
             queue.addAt(0, qtrack);
-            return 0;
+            audioPlayer.stopTrack();
+            return -1;
         }
+        queue.addAt(0, qtrack);
+        return 0;
     }
     
     public int addTrack(QueuedTrack qtrack)
@@ -100,8 +106,16 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             audioPlayer.playTrack(qtrack.getTrack());
             return -1;
         }
-        else
-            return queue.add(qtrack);
+        // A radio station never ends, so anything queued behind it would never
+        // play. Put the new track first and stop the station; onTrackEnd then
+        // starts it (the queue isn't empty, so the bot doesn't disconnect).
+        if(manager.getBot().getRadioMetadata().isRadio(audioPlayer.getPlayingTrack()))
+        {
+            queue.addAt(0, qtrack);
+            audioPlayer.stopTrack();
+            return -1;
+        }
+        return queue.add(qtrack);
     }
     
     public AbstractQueue<QueuedTrack> getQueue()

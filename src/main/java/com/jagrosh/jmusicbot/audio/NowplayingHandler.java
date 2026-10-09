@@ -19,7 +19,8 @@ import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.entities.Pair;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
-import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -32,6 +33,8 @@ import net.dv8tion.jda.api.exceptions.PermissionException;
 import net.dv8tion.jda.api.exceptions.RateLimitedException;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import net.dv8tion.jda.api.utils.messages.MessageEditData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -39,16 +42,25 @@ import net.dv8tion.jda.api.utils.messages.MessageEditData;
  */
 public class NowplayingHandler {
     private final Bot bot;
-    private final HashMap<Long, Pair<Long, Long>> lastNP; // guild -> channel,message
+    private static final Logger LOG = LoggerFactory.getLogger(NowplayingHandler.class);
+    // Written from JDA threads while the scheduler iterates it
+    private final Map<Long, Pair<Long, Long>> lastNP; // guild -> channel,message
 
     public NowplayingHandler(Bot bot) {
         this.bot = bot;
-        this.lastNP = new HashMap<>();
+        this.lastNP = new ConcurrentHashMap<>();
     }
 
     public void init() {
         if (!bot.getConfig().useNPImages())
-            bot.getThreadpool().scheduleWithFixedDelay(() -> updateAll(), 0, 5, TimeUnit.SECONDS);
+            bot.getThreadpool().scheduleWithFixedDelay(() -> {
+                // An exception escaping a scheduled task cancels all future runs
+                try {
+                    updateAll();
+                } catch (Exception e) {
+                    LOG.warn("Now-playing update failed", e);
+                }
+            }, 0, 5, TimeUnit.SECONDS);
     }
 
     public void setLastNPMessage(Message m) {
