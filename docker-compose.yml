@@ -1,0 +1,25 @@
+# Deployed on the homelab by the deploy job in .github/workflows/build-and-test.yml.
+# The project name is fixed so a deploy from any checkout replaces the same container.
+name: musicbot
+
+services:
+  musicbot:
+    build: .
+    image: musicbot:latest
+    container_name: musicbot
+    restart: unless-stopped
+    user: "1000:1000"
+    volumes:
+      # config.txt, serversettings.json, Playlists/
+      - /home/regan/musicbot:/musicbot
+      # yt-dlp lives on the host so the weekly updater keeps one copy current;
+      # the bot shells out to it, so it must exist inside the container too.
+      - /usr/local/bin/yt-dlp:/usr/local/bin/yt-dlp:ro
+    environment:
+      # yt-dlp writes its cache under $HOME; uid 1000 has no home in the image
+      HOME: /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

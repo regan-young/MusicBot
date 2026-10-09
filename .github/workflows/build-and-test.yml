@@ -1,22 +1,45 @@
-name: Build and Test
+name: Build, test and deploy
+
 on:
   push:
-    branches:
-    - master
+    branches: [master]
   pull_request:
-    branches:
-    - master
+  workflow_dispatch:
 
 jobs:
-  build:
+  test:
+    name: Build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up JDK 11
-        uses: actions/setup-java@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
-          java-version: '11'
-          distribution: 'adopt'
+          java-version: '25'
+          distribution: temurin
           cache: maven
-      - name: Build and Test with Maven
-        run: mvn --batch-mode --update-snapshots verify
+      - run: mvn --batch-mode verify
+
+  deploy:
+    name: Deploy to homelab
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: [self-hosted, musicbot]
+    concurrency: deploy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image and replace the container
+        run: docker compose up --detach --build --remove-orphans
+      - name: Wait for the bot to log in
+        run: |
+          for i in $(seq 1 24); do
+            if docker logs --since 3m musicbot 2>&1 | grep -q "Finished Loading"; then
+              echo "Bot is up"; exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' musicbot)" != "true" ]; then
+              break
+            fi
+            sleep 5
+          done
+          echo "Bot did not finish loading:"; docker logs --tail 50 musicbot; exit 1
+      - name: Remove dangling images
+        run: docker image prune --force
