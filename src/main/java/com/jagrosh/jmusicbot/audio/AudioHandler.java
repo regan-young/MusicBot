@@ -153,6 +153,28 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         return speaker;
     }
+
+    /** The volume people see and set (0-150), as saved in the guild settings. */
+    public int getVolume()
+    {
+        return manager.getBot().getSettingsManager().getSettings(guildId).getVolume();
+    }
+
+    /**
+     * Sets the music volume. The player runs at volume x musicgain, so music
+     * sits under the bot's voice; ?volume and the now-playing card keep
+     * showing the unscaled number.
+     */
+    public void setVolume(int volume)
+    {
+        manager.getBot().getSettingsManager().getSettings(guildId).setVolume(volume);
+        audioPlayer.setVolume(scaledVolume(volume, manager.getBot().getConfig().getMusicGain()));
+    }
+
+    static int scaledVolume(int volume, int gainPercent)
+    {
+        return Math.round(volume * gainPercent / 100f);
+    }
     
     public RequestMetadata getRequestMetadata()
     {
@@ -283,7 +305,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             eb.setDescription(getStatusEmoji()
                     + " "+FormatUtil.progressBar(progress)
                     + " `[" + TimeUtil.formatTime(track.getPosition()) + "/" + TimeUtil.formatTime(track.getDuration()) + "]` "
-                    + FormatUtil.volumeIcon(audioPlayer.getVolume()));
+                    + FormatUtil.volumeIcon(getVolume()));
             
             return mb.setEmbeds(eb.build())
                     .setComponents(manager.getBot().getPlayerControls().rows(guild))
@@ -299,7 +321,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                 .setContent(FormatUtil.filter(manager.getBot().getConfig().getSuccess()+" **Now Playing...**"))
                 .setEmbeds(new EmbedBuilder()
                 .setTitle("No music playing")
-                .setDescription(STOP_EMOJI+" "+FormatUtil.progressBar(-1)+" "+FormatUtil.volumeIcon(audioPlayer.getVolume()))
+                .setDescription(STOP_EMOJI+" "+FormatUtil.progressBar(-1)+" "+FormatUtil.volumeIcon(getVolume()))
                 .setColor(guild.getSelfMember().getColor())
                 .build()).build();
     }
