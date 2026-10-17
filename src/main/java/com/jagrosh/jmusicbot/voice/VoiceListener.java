@@ -88,6 +88,12 @@ public class VoiceListener implements AudioReceiveHandler
             finish(user);
     }
 
+    /** Whether this user is mid-utterance right now. */
+    public boolean isSpeaking(User user)
+    {
+        return active.containsKey(user);
+    }
+
     /** Ends utterances whose speaker has gone quiet. Call every ~100 ms. */
     public void flushIdle()
     {

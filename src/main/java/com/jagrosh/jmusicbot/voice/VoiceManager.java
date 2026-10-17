@@ -38,7 +38,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.User;
@@ -71,6 +73,8 @@ public class VoiceManager
     // a line that waited longer than this to be processed is stale; answering
     // it late is worse than not answering
     private static final long STALE_MS = 10_000;
+    // after just the bot's name, how long to wait for the rest before saying "Yes?"
+    private static final long NAME_WAIT_MS = 1500;
 
     private static class Line
     {
@@ -83,28 +87,63 @@ public class VoiceManager
         }
     }
 
+    /**
+     * Something a speaker said to the bot that it hasn't answered yet: just
+     * its name, or a chat line waiting on the LLM. If they say more first,
+     * the new line joins this one and the pending answer is cancelled.
+     */
+    private static class Turn
+    {
+        final String text;
+        final boolean named;
+        final Line line;
+        volatile Future<?> pending; // the LLM call, or the "Yes?" timer after a bare name
+
+        Turn(String text, boolean named, Line line)
+        {
+            this.text = text;
+            this.named = named;
+            this.line = line;
+        }
+    }
+
     private static class Session
     {
         final MessageChannel channel;
+        final VoiceListener listener;
         final ScheduledFuture<?> poller;
         final LlmClient.Conversation conversation;
         private final Deque<Line> log = new ArrayDeque<>();
+        // each speaker's lines are handled one after another, in order
+        final Map<Long, CompletableFuture<Void>> lines = new ConcurrentHashMap<>();
+        final Map<Long, Turn> turns = new ConcurrentHashMap<>();
         private volatile long lastSpoke;
         private volatile long lastAnswered; // user id of the last person the bot responded to
 
-        Session(MessageChannel channel, ScheduledFuture<?> poller, LlmClient.Conversation conversation)
+        Session(MessageChannel channel, VoiceListener listener, ScheduledFuture<?> poller, LlmClient.Conversation conversation)
         {
             this.channel = channel;
+            this.listener = listener;
             this.poller = poller;
             this.conversation = conversation;
         }
 
-        synchronized void add(String speaker, String text)
+        synchronized Line add(String speaker, String text)
         {
-            log.add(new Line(speaker, text));
+            return replace(null, speaker, text);
+        }
+
+        /** Swaps a line for a longer version of it, moved to the end of the log. */
+        synchronized Line replace(Line old, String speaker, String text)
+        {
+            if (old != null)
+                log.removeIf(l -> l == old);
+            Line line = new Line(speaker, text);
+            log.add(line);
             long cutoff = System.currentTimeMillis() - LOG_MAX_AGE_MS;
             while (log.size() > LOG_LINES || (!log.isEmpty() && log.peekFirst().time < cutoff))
                 log.removeFirst();
+            return line;
         }
 
         synchronized List<String> recent()
@@ -135,6 +174,8 @@ public class VoiceManager
     private final ExecutorService speech = Executors.newSingleThreadExecutor(r -> daemon(r, "voice-tts"));
     // LLM calls run beside the router, so they get their own threads
     private final ExecutorService llmCalls = Executors.newCachedThreadPool(r -> daemon(r, "voice-llm"));
+    // bumped by "hush" so queued speech is dropped
+    private final Map<Long, AtomicInteger> speechEpochs = new ConcurrentHashMap<>();
 
     public VoiceManager(Bot bot, BotConfig config)
     {
@@ -186,10 +227,25 @@ public class VoiceManager
         VoiceListener listener = new VoiceListener((user, wav) ->
         {
             long heardAt = System.currentTimeMillis();
-            workers.submit(() -> onUtterance(guildId, user, wav, heardAt));
+            Session s = sessions.get(guildId);
+            if (s == null)
+                return;
+            // one speaker's lines run in order, so a line can see the turn the one before it opened
+            s.lines.compute(user.getIdLong(), (id, before) ->
+                    (before == null ? CompletableFuture.<Void>completedFuture(null) : before).thenRunAsync(() ->
+                    {
+                        try
+                        {
+                            onUtterance(guildId, user, wav, heardAt);
+                        }
+                        catch (Exception e)
+                        {
+                            LOG.warn("Voice line failed", e);
+                        }
+                    }, workers));
         });
         ScheduledFuture<?> poller = ticker.scheduleAtFixedRate(listener::flushIdle, 100, 100, TimeUnit.MILLISECONDS);
-        sessions.put(guildId, new Session(channel, poller, llm == null ? null : llm.newConversation()));
+        sessions.put(guildId, new Session(channel, listener, poller, llm == null ? null : llm.newConversation()));
         guild.getAudioManager().setReceivingHandler(listener);
     }
 
@@ -199,11 +255,22 @@ public class VoiceManager
         if (s == null)
             return;
         s.poller.cancel(false);
+        s.turns.values().forEach(t -> t.pending.cancel(true));
         guild.getAudioManager().setReceivingHandler(null);
     }
 
     /** Speaks text in the guild's voice channel; the bot must already be connected. */
     public void speak(Guild guild, String text)
+    {
+        speak(guild, text, 0);
+    }
+
+    /**
+     * Speaks text one sentence at a time, so the first sentence plays while
+     * the rest are synthesised.
+     * @param heardAt when the line being answered was heard, for the latency log, or 0
+     */
+    private void speak(Guild guild, String text, long heardAt)
     {
         if (api == null || text == null || text.isBlank())
             return;
@@ -214,55 +281,108 @@ public class VoiceManager
             session.add(BOT_NAME, text);
             session.lastSpoke = System.currentTimeMillis();
         }
-        speech.submit(() ->
+        AtomicInteger epoch = speechEpochs.computeIfAbsent(guildId, id -> new AtomicInteger());
+        int asked = epoch.get();
+        List<String> parts = sentences(text);
+        for (int i = 0; i < parts.size(); i++)
         {
-            try
+            String part = parts.get(i);
+            boolean first = i == 0;
+            speech.submit(() ->
             {
-                long start = System.currentTimeMillis();
-                byte[] wav = api.speak(text);
-                LOG.info("Spoke in {} ms: {}", System.currentTimeMillis() - start, text);
-                Path file = Files.createTempFile("gunna-tts-", ".wav");
-                Files.write(file, wav);
-                Guild g = bot.getJDA().getGuildById(guildId);
-                if (g == null)
+                if (epoch.get() != asked)
+                    return; // hushed
+                try
                 {
-                    Files.deleteIfExists(file);
-                    return;
+                    long start = System.currentTimeMillis();
+                    byte[] wav = api.speak(part);
+                    long now = System.currentTimeMillis();
+                    if (first && heardAt > 0)
+                        // heardAt is END_SILENCE_MS after they stopped talking
+                        LOG.info("Spoke in {} ms, {} ms after they stopped talking: {}", now - start,
+                                now - heardAt + VoiceListener.END_SILENCE_MS, part);
+                    else
+                        LOG.info("Spoke in {} ms: {}", now - start, part);
+                    play(guildId, wav, epoch, asked);
                 }
-                AudioHandler handler = bot.getPlayerManager().setUpHandler(g);
-                bot.getPlayerManager().loadItemOrdered(handler.getSpeaker(), file.toString(), new AudioLoadResultHandler()
+                catch (Exception e)
                 {
-                    @Override
-                    public void trackLoaded(AudioTrack track)
-                    {
-                        track.setUserData(file);
-                        handler.getSpeaker().enqueue(track);
-                    }
+                    LOG.warn("TTS request failed", e);
+                }
+            });
+        }
+    }
 
-                    @Override
-                    public void playlistLoaded(AudioPlaylist playlist) { discard(); }
-
-                    @Override
-                    public void noMatches() { discard(); }
-
-                    @Override
-                    public void loadFailed(FriendlyException e)
-                    {
-                        LOG.warn("Could not load TTS clip", e);
-                        discard();
-                    }
-
-                    private void discard()
-                    {
-                        try { Files.deleteIfExists(file); } catch (Exception ignored) {}
-                    }
-                });
-            }
-            catch (Exception e)
+    private void play(long guildId, byte[] wav, AtomicInteger epoch, int asked) throws java.io.IOException
+    {
+        Guild g = bot.getJDA().getGuildById(guildId);
+        if (g == null || epoch.get() != asked)
+            return;
+        Path file = Files.createTempFile("gunna-tts-", ".wav");
+        Files.write(file, wav);
+        AudioHandler handler = bot.getPlayerManager().setUpHandler(g);
+        bot.getPlayerManager().loadItemOrdered(handler.getSpeaker(), file.toString(), new AudioLoadResultHandler()
+        {
+            @Override
+            public void trackLoaded(AudioTrack track)
             {
-                LOG.warn("TTS request failed", e);
+                track.setUserData(file);
+                if (epoch.get() == asked)
+                    handler.getSpeaker().enqueue(track);
+                else
+                    discard();
+            }
+
+            @Override
+            public void playlistLoaded(AudioPlaylist playlist) { discard(); }
+
+            @Override
+            public void noMatches() { discard(); }
+
+            @Override
+            public void loadFailed(FriendlyException e)
+            {
+                LOG.warn("Could not load TTS clip", e);
+                discard();
+            }
+
+            private void discard()
+            {
+                try { Files.deleteIfExists(file); } catch (Exception ignored) {}
             }
         });
+    }
+
+    /** Stops the bot talking: drops queued speech and cuts off the current clip. Music carries on. */
+    private void hush(Guild guild)
+    {
+        speechEpochs.computeIfAbsent(guild.getIdLong(), id -> new AtomicInteger()).incrementAndGet();
+        bot.getPlayerManager().setUpHandler(guild).getSpeaker().clear();
+    }
+
+    // a sentence shorter than this joins the next, so clips aren't choppy
+    private static final int MIN_SENTENCE = 24;
+
+    /** Splits a reply into sentences for speaking one by one. */
+    static List<String> sentences(String text)
+    {
+        List<String> out = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        // don't split after titles like "Mr." in "Mr. Brightside"
+        for (String s : text.trim().split("(?<!\\b(?:Mr|Mrs|Ms|Dr|St|vs))(?<=[.!?])\\s+"))
+        {
+            if (cur.length() > 0)
+                cur.append(' ');
+            cur.append(s);
+            if (cur.length() >= MIN_SENTENCE)
+            {
+                out.add(cur.toString());
+                cur.setLength(0);
+            }
+        }
+        if (cur.length() > 0)
+            out.add(cur.toString());
+        return out;
     }
 
     private void onUtterance(long guildId, User user, byte[] wav, long heardAt)
@@ -292,22 +412,48 @@ public class VoiceManager
             return;
         long sttMs = System.currentTimeMillis() - start;
         long audioMs = VoiceAudio.durationMs(wav.length - 44);
+        long uid = user.getIdLong();
 
         Member member = guild.getMember(user);
         String name = member != null ? member.getEffectiveName() : user.getName();
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
         boolean followUp = session.isFollowUp(user);
-        session.add(name, text);
+        boolean named = VoiceCommand.parse(text).addressed;
+
+        // They kept talking before the bot answered ("Gunnabot, um..." then
+        // the question, or a question in two breaths): it's all one turn, and
+        // the answer to the first half is cancelled.
+        Turn before = session.turns.remove(uid);
+        Line line;
+        if (before != null)
+        {
+            before.pending.cancel(true);
+            text = before.text + " " + text;
+            named |= before.named;
+            line = session.replace(before.line, name, text);
+        }
+        else
+            line = session.add(name, text);
+        String said = text;
+        String how = (before != null ? " continued" : "") + (named ? "" : followUp ? " follow-up" : " unnamed");
+
+        if (VoiceCommand.isNameOnly(said))
+        {
+            Turn turn = new Turn(said, true, line);
+            session.turns.put(uid, turn);
+            turn.pending = ticker.schedule(() -> answerName(guild, session, user, turn), NAME_WAIT_MS, TimeUnit.MILLISECONDS);
+            LOG.info("Heard {} ({} ms audio, STT {} ms){}: {} -> waiting for the rest", name, audioMs, sttMs, how, said);
+            return;
+        }
+
         List<String> recent = session.recent();
         String player = playerState(handler);
-        VoiceCommand parsed = VoiceCommand.parse(text);
-        boolean named = parsed.addressed;
 
-        // When the bot is named it's almost certainly being spoken to, so the
-        // chat LLM starts alongside the router and a chat reply isn't delayed
-        // by it. Unnamed lines wait for the router, so chatter between friends
-        // never leaves the network.
-        CompletableFuture<LlmClient.Decision> chat = named ? askLlm(session, name, text, player, recent) : null;
+        // When the bot is named, or is being answered, it's almost certainly
+        // being spoken to, so the chat LLM starts alongside the router and a
+        // chat reply isn't delayed by it. It's cancelled if the router picks a
+        // command instead.
+        CompletableFuture<LlmClient.Decision> chat = named || followUp ? askLlm(session, name, said, player, recent) : null;
 
         VoiceRouter.Route route = null;
         long routerMs = 0;
@@ -326,41 +472,66 @@ public class VoiceManager
         }
 
         boolean toBot = named || (route != null && route.toBot);
+        // named but the router saw no command: treat it as talk
+        String command = !toBot ? "none" : route == null || !route.toBot ? "chat" : route.command;
+        if (chat != null && !command.equals("chat"))
+            chat.cancel(true);
         if (!toBot)
         {
-            LOG.info("Heard {} ({} ms audio, STT {} ms, router {} ms), not for the bot: {}", name, audioMs, sttMs, routerMs, text);
+            LOG.info("Heard {} ({} ms audio, STT {} ms, router {} ms), not for the bot: {}", name, audioMs, sttMs, routerMs, said);
             return;
         }
-        session.lastAnswered = user.getIdLong();
-        // named but the router saw no command: treat it as talk
-        String command = route == null || !route.toBot ? "chat" : route.command;
+        session.lastAnswered = uid;
         String args = route == null ? "" : route.args;
         LOG.info("Heard {} ({} ms audio, STT {} ms, router {} ms){}: {} -> {} [{}]", name, audioMs, sttMs, routerMs,
-                named ? "" : (followUp ? " follow-up" : " unnamed"), text, command, args);
+                how, said, command, args);
 
         if (!command.equals("chat"))
         {
-            run(guild, member, session, command, args);
+            run(guild, member, session, command, args, heardAt);
             return;
         }
         if (session.conversation == null)
         {
             // no chat LLM: fall back to the simple keyword commands
-            runDecision(guild, member, session, parsed.type, parsed.arg, "");
+            VoiceCommand parsed = VoiceCommand.parse(said);
+            runDecision(guild, member, session, parsed.type, parsed.arg, "", heardAt);
             return;
         }
-        try
+        Turn turn = new Turn(said, named, line);
+        CompletableFuture<LlmClient.Decision> reply = chat != null ? chat : askLlm(session, name, said, player, recent);
+        turn.pending = reply;
+        session.turns.put(uid, turn);
+        long asked = System.currentTimeMillis();
+        reply.whenCompleteAsync((d, e) ->
         {
-            long t = System.currentTimeMillis();
-            LlmClient.Decision d = (chat != null ? chat : askLlm(session, name, text, player, recent)).get(45, TimeUnit.SECONDS);
-            LOG.info("LLM {} ms: {} [{}] {}", System.currentTimeMillis() - t, d.action, d.query, d.reply);
-            runDecision(guild, member, session, d.action, d.query, LlmClient.forSpeech(d.reply));
-        }
-        catch (Exception e)
+            // superseded: they said more, and the longer turn gets the answer
+            if (!session.turns.remove(uid, turn))
+                return;
+            if (e != null)
+            {
+                LOG.warn("LLM request failed", e);
+                speak(guild, "Sorry, my brain isn't responding right now.");
+                return;
+            }
+            LOG.info("LLM {} ms: {} [{}] {}", System.currentTimeMillis() - asked, d.action, d.query, d.reply);
+            runDecision(guild, member, session, d.action, d.query, LlmClient.forSpeech(d.reply), heardAt);
+        }, llmCalls);
+    }
+
+    /** Just the bot's name and then nothing: answer it, unless they've started saying more. */
+    private void answerName(Guild guild, Session session, User user, Turn turn)
+    {
+        if (session.listener.isSpeaking(user) && session.turns.get(user.getIdLong()) == turn)
         {
-            LOG.warn("LLM request failed", e);
-            speak(guild, "Sorry, my brain isn't responding right now.");
+            // still talking; the rest will join this turn
+            turn.pending = ticker.schedule(() -> answerName(guild, session, user, turn), 300, TimeUnit.MILLISECONDS);
+            return;
         }
+        if (!session.turns.remove(user.getIdLong(), turn))
+            return;
+        session.lastAnswered = user.getIdLong();
+        speak(guild, "Yes?");
     }
 
     private CompletableFuture<LlmClient.Decision> askLlm(Session session, String name, String text, String player, List<String> recent)
@@ -371,37 +542,28 @@ public class VoiceManager
         List<String> before = recent.subList(0, Math.max(0, recent.size() - 1));
         String context = "Player: " + player
                 + (before.isEmpty() ? "" : " Recent conversation in the channel:\n" + String.join("\n", before));
-        return CompletableFuture.supplyAsync(() ->
-        {
-            try
-            {
-                return session.conversation.decide(name, text, context);
-            }
-            catch (Exception e)
-            {
-                throw new RuntimeException(e);
-            }
-        }, llmCalls);
+        return session.conversation.decide(name, text, context);
     }
 
     /** Acts on what the chat LLM (or the keyword fallback) decided. */
-    private void runDecision(Guild guild, Member member, Session session, VoiceCommand.Type action, String query, String reply)
+    private void runDecision(Guild guild, Member member, Session session, VoiceCommand.Type action, String query, String reply,
+            long heardAt)
     {
         switch (action)
         {
-            case PLAY:   run(guild, member, session, "play", query); break;
-            case RADIO:  run(guild, member, session, "radio", query); break;
-            case MIX:    run(guild, member, session, "mix", query); break;
-            case SKIP:   run(guild, member, session, "skip", ""); break;
-            case STOP:   run(guild, member, session, "stop", ""); break;
-            case PAUSE:  run(guild, member, session, "pause", ""); break;
-            case RESUME: run(guild, member, session, "resume", ""); break;
+            case PLAY:   run(guild, member, session, "play", query, heardAt); break;
+            case RADIO:  run(guild, member, session, "radio", query, heardAt); break;
+            case MIX:    run(guild, member, session, "mix", query, heardAt); break;
+            case SKIP:   run(guild, member, session, "skip", "", heardAt); break;
+            case STOP:   run(guild, member, session, "stop", "", heardAt); break;
+            case PAUSE:  run(guild, member, session, "pause", "", heardAt); break;
+            case RESUME: run(guild, member, session, "resume", "", heardAt); break;
             case NOW_PLAYING:
                 AudioTrack t = bot.getPlayerManager().setUpHandler(guild).getPlayer().getPlayingTrack();
-                speak(guild, t == null ? "Nothing's playing." : "This is " + t.getInfo().title + ".");
+                speak(guild, t == null ? "Nothing's playing." : "This is " + t.getInfo().title + ".", heardAt);
                 break;
             default:
-                speak(guild, reply);
+                speak(guild, reply, heardAt);
         }
     }
 
@@ -410,23 +572,26 @@ public class VoiceManager
      * (?pause is a toggle); the rest run the real command as the speaker, and
      * the bot says a short confirmation, or the command's error if it fails.
      */
-    private void run(Guild guild, Member member, Session session, String command, String args)
+    private void run(Guild guild, Member member, Session session, String command, String args, long heardAt)
     {
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
         switch (command)
         {
             case "pause":
                 handler.getPlayer().setPaused(true);
-                speak(guild, "Paused.");
+                speak(guild, "Paused.", heardAt);
                 return;
             case "resume":
                 handler.getPlayer().setPaused(false);
-                speak(guild, "Resuming.");
+                speak(guild, "Resuming.", heardAt);
+                return;
+            case "hush":
+                hush(guild);
                 return;
             case "volume":
                 if (!args.matches("\\d{1,3}"))
                 {
-                    speak(guild, "How loud would you like it, out of a hundred and fifty?");
+                    speak(guild, "How loud would you like it, out of a hundred and fifty?", heardAt);
                     return;
                 }
                 break;
@@ -434,7 +599,7 @@ public class VoiceManager
             case "radio":
                 if (args.isBlank())
                 {
-                    speak(guild, command.equals("play") ? "What should I play?" : "Which station?");
+                    speak(guild, command.equals("play") ? "What should I play?" : "Which station?", heardAt);
                     return;
                 }
                 break;
@@ -449,7 +614,7 @@ public class VoiceManager
             // speak the first error or warning, cleaned up; success replies are
             // covered by the confirmation
             if ((reply.startsWith(c.getError()) || reply.startsWith(c.getWarning())) && spokeError.compareAndSet(false, true))
-                speak(guild, spokenReply(reply));
+                speak(guild, spokenReply(reply), heardAt);
         });
         String name = command;
         if (command.equals("skip") && DJCommand.checkDJPermission(event))
@@ -462,7 +627,7 @@ public class VoiceManager
         }
         String ack = VoiceRouter.ACKS.get(command);
         if (ack != null)
-            speak(guild, String.format(ack, args));
+            speak(guild, String.format(ack, args), heardAt);
         cmd.run(event);
     }
 

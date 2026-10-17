@@ -22,6 +22,8 @@ import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -47,7 +49,10 @@ public class LlmClient
             + "songs like a song or artist (query = that song or artist, empty for like what's playing), "
             + "skip to move to the next song, pause and resume to pause or continue, stop to stop the music and "
             + "clear the queue. A temporary halt (\"hang on\", \"stop it for a sec\", \"hold the music\") is pause; "
-            + "use stop only when they want the music finished. Use chat for everything else, including questions "
+            + "use stop only when they want the music finished. When they leave the choice to you (\"something you'd "
+            + "like\", \"surprise me\", \"put some music on\"), pick one specific real song yourself, suited to the "
+            + "conversation and what's been playing, and use play with query = \"Artist - Title\"; never search for "
+            + "a vague phrase. Use chat for everything else, including questions "
             + "about the current song, which is given in the context. Only choose a music action when they clearly "
             + "ask for it; otherwise chat. For music actions keep reply to a few words, like \"Skipping.\" "
             + "People call you Gunnabot, bot, robot or clanker. Every message you see was said to you, though not "
@@ -57,6 +62,7 @@ public class LlmClient
             .connectTimeout(Duration.ofSeconds(10)).build();
     private final String baseUrl, apiKey, model, systemPrompt;
     private final int maxTokens;
+    private final boolean openRouter;
 
     public LlmClient(String baseUrl, String apiKey, String model, String persona, int maxTokens)
     {
@@ -65,6 +71,7 @@ public class LlmClient
         this.model = model;
         this.systemPrompt = persona + ACTIONS;
         this.maxTokens = maxTokens;
+        this.openRouter = this.baseUrl.contains("openrouter.ai");
     }
 
     public String getModel()
@@ -96,14 +103,20 @@ public class LlmClient
         private final Deque<JSONObject> history = new ArrayDeque<>();
 
         /**
-         * Classifies what a speaker said and writes the reply, keeping both in the history.
+         * Classifies what a speaker said and writes the reply, keeping both in
+         * the history. Cancelling the returned future aborts the request and
+         * leaves the history untouched, so a reply nobody will hear (they kept
+         * talking, or it turned out to be a command) isn't remembered.
          * @param context a line describing the player state ("Now playing: ...")
          */
-        public synchronized Decision decide(String speaker, String text, String context) throws IOException, InterruptedException
+        public CompletableFuture<Decision> decide(String speaker, String text, String context)
         {
             JSONObject user = new JSONObject().put("role", "user").put("content", speaker + ": " + text);
             JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", systemPrompt));
-            history.forEach(messages::put);
+            synchronized (this)
+            {
+                history.forEach(messages::put);
+            }
             messages.put(new JSONObject().put("role", "system").put("content", "Context: " + context));
             messages.put(user);
 
@@ -112,27 +125,45 @@ public class LlmClient
                     .put("max_tokens", maxTokens)
                     .put("response_format", new JSONObject().put("type", "json_object"))
                     .put("messages", messages);
+            if (openRouter)
+            {
+                // models like DeepSeek V4 think by default: that took 2-15 s and
+                // could use up max_tokens before writing any reply
+                body.put("reasoning", new JSONObject().put("enabled", false));
+                body.put("provider", new JSONObject().put("sort", "latency"));
+            }
             HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + "/chat/completions"))
-                    .timeout(Duration.ofSeconds(45))
+                    .timeout(Duration.ofSeconds(30))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     // OpenRouter attribution header; ignored by other providers
                     .header("X-Title", "Gunna bot")
                     .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                     .build();
-            HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
-            if (res.statusCode() != 200)
-                throw new IOException("LLM failed: HTTP " + res.statusCode() + " " + res.body());
-            JSONArray choices = new JSONObject(res.body()).optJSONArray("choices");
-            String content = choices == null || choices.isEmpty() ? ""
-                    : choices.getJSONObject(0).getJSONObject("message").optString("content", "").trim();
-            Decision d = parseDecision(content);
-
-            history.add(user);
-            history.add(new JSONObject().put("role", "assistant").put("content", content));
-            while (history.size() > HISTORY_MESSAGES)
-                history.removeFirst();
-            return d;
+            CompletableFuture<HttpResponse<String>> call = http.sendAsync(req, HttpResponse.BodyHandlers.ofString());
+            CompletableFuture<Decision> result = call.thenApply(res ->
+            {
+                if (res.statusCode() != 200)
+                    throw new CompletionException(new IOException("LLM failed: HTTP " + res.statusCode() + " " + res.body()));
+                JSONArray choices = new JSONObject(res.body()).optJSONArray("choices");
+                String content = choices == null || choices.isEmpty() ? ""
+                        : choices.getJSONObject(0).getJSONObject("message").optString("content", "").trim();
+                synchronized (this)
+                {
+                    history.add(user);
+                    history.add(new JSONObject().put("role", "assistant").put("content", content));
+                    while (history.size() > HISTORY_MESSAGES)
+                        history.removeFirst();
+                }
+                return parseDecision(content);
+            });
+            // cancelling the result doesn't reach the HTTP call by itself
+            result.whenComplete((d, e) ->
+            {
+                if (result.isCancelled())
+                    call.cancel(true);
+            });
+            return result;
         }
     }
 

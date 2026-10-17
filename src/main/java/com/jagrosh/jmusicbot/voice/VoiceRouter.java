@@ -28,7 +28,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * Asks a small, fast local LLM (Qwen3 1.7B on the homelab MacBook) two things
+ * Asks a small, fast LLM (Gemma 3 12B on OpenRouter in the homelab) two things
  * about each line of voice chat: is it said to the bot, and which bot command
  * does it map to. That lets people talk naturally ("yeah go on then" right
  * after the bot asked something) instead of saying the bot's name every
@@ -52,7 +52,7 @@ public class VoiceRouter
 
     /** Commands the router may pick. "chat" goes to the conversational LLM, "none" is ignored. */
     static final Set<String> COMMANDS = Set.of("play", "radio", "mix", "skip", "pause", "resume", "stop",
-            "volume", "shuffle", "chat", "none");
+            "volume", "shuffle", "hush", "chat", "none");
 
     static final String SYSTEM = "You route voice chat for Gunnabot, a music bot in a Discord voice channel with "
             + "several friends. Speech recognition is imperfect: the bot's name may come out as Gunnabot, Gunnerbot, "
@@ -62,7 +62,10 @@ public class VoiceRouter
             + "answering what it just said)? Friends talking to each other, or talking ABOUT the bot (calling it she, "
             + "her, it or the bot), is false.\n"
             + "2. command: the bot command that fits, from this list:\n"
-            + "- play: play or queue a specific song, artist or album. args: what to search for\n"
+            + "- play: play or queue a song, artist, album or genre they name (but \"songs like X\" is mix). args: "
+            + "what to search for. If they "
+            + "leave the choice to the bot (\"something you like\", \"surprise me\", \"put some music on\"), use chat "
+            + "instead, so the bot can pick\n"
             + "- radio: tune in to a live radio station, or radio of a genre. Use this for any named station (RNZ, ZM, "
             + "The Edge, The Rock, Radio Hauraki, George FM, BBC, Triple J, KEXP, ...) or anything said with radio, "
             + "station or FM. args: station name or genre\n"
@@ -75,6 +78,7 @@ public class VoiceRouter
             + "- volume: change the volume. args: the new number 0-150. The current volume is on the Player line; "
             + "\"up a bit\" is about 20 more, \"down a bit\" about 20 less\n"
             + "- shuffle: shuffle the queue\n"
+            + "- hush: the bot should stop talking (\"shut up\", \"that's enough\", \"stop talking\"), not the music\n"
             + "- chat: anything else said to the bot: questions (including about the current song), banter, "
             + "answers to what it asked, requests it can't do as a command\n"
             + "- none: not talking to the bot\n\n"
@@ -86,6 +90,7 @@ public class VoiceRouter
         { "Regan: robot, put on some Fleetwood Mac", "{\"to_bot\": true, \"command\": \"play\", \"args\": \"Fleetwood Mac\"}" },
         { "Regan: bot, chuck on the BBC World Service", "{\"to_bot\": true, \"command\": \"radio\", \"args\": \"BBC World Service\"}" },
         { "Regan: robot, can you do more songs like this one", "{\"to_bot\": true, \"command\": \"mix\", \"args\": \"\"}" },
+        { "Sam: bot, play something you think we'd like", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
         { "Sam: Gunnabot what's the capital of Peru\nGunnabot: Lima, the city of kings.\nKFC: haha she knows everything",
           "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
         { "Regan: bot, do you know any good podcasts?\nGunnabot: A few. Do you want history or comedy?\nRegan: history please",

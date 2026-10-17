@@ -49,6 +49,22 @@ public final class VoiceCommand
             "\\b(?:(?:hey|hi|ok|okay|oi)\\s+)?(?:\\p{L}{2,}(?:a|ah|er|uh)\\s?bot|robot|bot|clankers?)\\b");
     private static final Pattern PUNCTUATION = Pattern.compile("[^\\p{L}\\p{N}'\\s]");
 
+    private static final Pattern FILLER = Pattern.compile("\\b(?:um+|uh+|er+|erm|hmm+|so|yeah|hey|hi|hello|yo|oi|ok|okay)\\b");
+
+    /**
+     * Whether the transcript is just the bot's name, maybe with filler ("Gunner
+     * bot. Um"): people pause after the name, and the rest of what they say
+     * arrives as the next utterance.
+     */
+    public static boolean isNameOnly(String transcript)
+    {
+        String t = PUNCTUATION.matcher(transcript == null ? "" : transcript.toLowerCase(Locale.ROOT)).replaceAll(" ");
+        Matcher wake = WAKE.matcher(t);
+        if (!wake.find())
+            return false;
+        return FILLER.matcher(wake.replaceAll(" ")).replaceAll(" ").isBlank();
+    }
+
     public static VoiceCommand parse(String transcript)
     {
         String original = transcript == null ? "" : transcript.trim();

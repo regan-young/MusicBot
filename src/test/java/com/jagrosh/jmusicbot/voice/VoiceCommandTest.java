@@ -1,6 +1,7 @@
 package com.jagrosh.jmusicbot.voice;
 
 import com.jagrosh.jmusicbot.voice.VoiceCommand.Type;
+import java.util.List;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -74,6 +75,28 @@ public class VoiceCommandTest
         assertFalse(VoiceCommand.parse("we went to the robotics club").addressed);
         // the LLM gets the transcript as spoken
         assertEquals("Gunnabot, what's up?", VoiceCommand.parse("Gunnabot, what's up?").arg);
+    }
+
+    @Test
+    public void nameOnly()
+    {
+        // from the 2026-10-17 logs: the question came as the next utterance
+        assertTrue(VoiceCommand.isNameOnly("Gunner bot. Um"));
+        assertTrue(VoiceCommand.isNameOnly("Hey Gunnabot?"));
+        assertTrue(VoiceCommand.isNameOnly("Robot."));
+        assertFalse(VoiceCommand.isNameOnly("Hey gunnerbot. Um tell me a joke."));
+        assertFalse(VoiceCommand.isNameOnly("Um, so yeah."));
+        assertFalse(VoiceCommand.isNameOnly("Bot, skip"));
+    }
+
+    @Test
+    public void sentencesForSpeech()
+    {
+        assertEquals(List.of("Why do musicians hate elevators?", "Because they can't stand the ups and downs."),
+                VoiceManager.sentences("Why do musicians hate elevators? Because they can't stand the ups and downs."));
+        // short sentences join the next one, and titles don't end a sentence
+        assertEquals(List.of("Sure. Queuing Mr. Brightside now."), VoiceManager.sentences("Sure. Queuing Mr. Brightside now."));
+        assertEquals(List.of("Yes?"), VoiceManager.sentences("Yes?"));
     }
 
     @Test
