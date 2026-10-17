@@ -20,6 +20,8 @@ public class LlmClientTest
     public void playWithoutQueryResumes()
     {
         assertEquals(Type.RESUME, LlmClient.parseDecision("{\"action\":\"play\",\"query\":\"\",\"reply\":\"\"}").action);
+        // "what should we listen to?" isn't "resume"
+        assertEquals(Type.CHAT, LlmClient.parseDecision("{\"action\":\"play\",\"query\":\"\",\"reply\":\"How about Six60?\"}").action);
     }
 
     @Test

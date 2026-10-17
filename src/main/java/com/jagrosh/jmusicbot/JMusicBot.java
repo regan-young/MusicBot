@@ -123,7 +123,8 @@ public class JMusicBot {
                             config.getStatus() == OnlineStatus.INVISIBLE || config.getStatus() == OnlineStatus.OFFLINE
                                     ? OnlineStatus.INVISIBLE
                                     : OnlineStatus.DO_NOT_DISTURB)
-                    .addEventListeners(client, waiter, new Listener(bot), new InteractionListener(bot, client))
+                    .addEventListeners(client, waiter, new Listener(bot), new InteractionListener(bot, client),
+                            new com.jagrosh.jmusicbot.voice.TextChat(bot, client))
                     .setBulkDeleteSplittingEnabled(true)
                     // Discord rejects voice connections without DAVE (close code
                     // 4017) since 2026-03-02. JDA only supplies the interface.

@@ -49,9 +49,11 @@ public class LlmClient
     // Appended to the configurable persona prompt; the code depends on this format.
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
             + "only a JSON object, no other text, with the keys in this order: {\"action\": one of \"play\", \"radio\", "
-            + "\"mix\", \"skip\", \"pause\", \"resume\", \"stop\", \"research\", \"chat\"; \"query\": what to search "
-            + "for (play, radio and mix only, otherwise empty); \"task\": for research only, otherwise empty; \"post\": "
-            + "text to post in the Discord text channel, usually empty; \"reply\": what to say out loud}. "
+            + "\"mix\", \"skip\", \"pause\", \"resume\", \"stop\", \"research\", \"remind\", \"cancel_reminders\", "
+            + "\"forget\", \"chat\"; \"query\": what to search for (play, radio and mix only, otherwise empty); \"task\": "
+            + "for research and remind only, otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
+            + "usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
+            + "out loud}. "
             + "Use play when they want a song, artist or album played or queued (query = what to search YouTube for), "
             + "radio for a live radio station or radio of a genre (query = station name or genre), mix for several "
             + "songs like a song or artist (query = that song or artist, empty for like what's playing), "
@@ -73,6 +75,15 @@ public class LlmClient
             + "you already know (capitals, definitions, history, how things work): just answer. Use post when they ask you to post, send, write down or share something in the chat, "
             + "or when a link or list is far easier to read than hear: plain text and links, no @mentions; then say "
             + "you've posted it; a request only to post something is chat. "
+            + "Use remind when they ask to be reminded of something or for a timer: task = what to remind them of, "
+            + "short (\"start the game\"), minutes = how many minutes from now (work out clock times from the time "
+            + "in the context), reply = a short confirmation. Use cancel_reminders when they want their reminders "
+            + "cancelled. When the speaker tells you something lasting about themselves that a friend would remember "
+            + "(favourite music, teams, what they're into, plans, a running joke), or asks you to remember something, "
+            + "set remember to one short fact in the third person (\"Regan supports the Blues\"); never remember "
+            + "anything sensitive (health, money, passwords, addresses). Use forget when they ask you to forget what "
+            + "you know about them. What you already remember about people is in the context; use it naturally, "
+            + "without reciting it. "
             + "People call you Gunnabot, bot, robot or clanker. Every message you see was said to you, though not "
             + "always by name; the recent channel conversation in the context shows what they're responding to.";
 
@@ -113,24 +124,37 @@ public class LlmClient
     public static class Decision
     {
         public final VoiceCommand.Type action;
-        /** query: a music search; task: what to research; post: text for the Discord channel */
-        public final String query, task, post, reply;
+        /**
+         * query: a music search; task: what to research or the reminder;
+         * remember: a fact about the speaker to keep; post: text for the Discord channel
+         */
+        public final String query, task, remember, post, reply;
+        /** For a reminder: minutes from now. */
+        public final double minutes;
         /** How many sentences of the reply were already spoken while it streamed in. */
         public final int streamed;
 
         Decision(VoiceCommand.Type action, String query, String reply)
         {
-            this(action, query, "", "", reply, 0);
+            this(action, query, "", 0, "", "", reply, 0);
         }
 
-        Decision(VoiceCommand.Type action, String query, String task, String post, String reply, int streamed)
+        Decision(VoiceCommand.Type action, String query, String task, double minutes, String remember, String post,
+                String reply, int streamed)
         {
             this.action = action;
             this.query = query;
             this.task = task;
+            this.minutes = minutes;
+            this.remember = remember;
             this.post = post;
             this.reply = reply;
             this.streamed = streamed;
+        }
+
+        Decision withStreamed(int sentences)
+        {
+            return new Decision(action, query, task, minutes, remember, post, reply, sentences);
         }
     }
 
@@ -141,8 +165,8 @@ public class LlmClient
         /** Adds something the bot said outside a decide() call (a research answer) to the history. */
         public synchronized void remember(String said)
         {
-            JSONObject reply = new JSONObject().put("action", "chat").put("query", "").put("task", "")
-                    .put("post", "").put("reply", said);
+            JSONObject reply = new JSONObject().put("action", "chat").put("query", "").put("task", "").put("minutes", 0)
+                    .put("remember", "").put("post", "").put("reply", said);
             history.add(new JSONObject().put("role", "assistant").put("content", reply.toString()));
             while (history.size() > HISTORY_MESSAGES)
                 history.removeFirst();
@@ -212,7 +236,7 @@ public class LlmClient
                             history.removeFirst();
                     }
                     Decision d = parseDecision(content);
-                    return new Decision(d.action, d.query, d.task, d.post, d.reply, reply.sentences());
+                    return d.withStreamed(reply.sentences());
                 }
                 catch (IOException | UncheckedIOException e)
                 {
@@ -279,13 +303,18 @@ public class LlmClient
         String query = o.optString("query", "").trim();
         String task = o.optString("task", "").trim();
         String post = o.optString("post", "").trim();
+        String remember = o.optString("remember", "").trim();
+        double minutes = o.optDouble("minutes", 0);
+        if (Double.isNaN(minutes))
+            minutes = 0;
         String reply = o.optString("reply", "").trim();
         VoiceCommand.Type action;
         switch (o.optString("action", "chat").trim().toLowerCase(Locale.ROOT))
         {
-            // models sometimes label "post that link" as play with no query; that isn't "resume"
+            // play with nothing to play: a bare "play" (no reply) means resume, but models
+            // also label "what should we listen to?" or "post that link" as play
             case "play":   action = !query.isEmpty() ? VoiceCommand.Type.PLAY
-                    : post.isEmpty() ? VoiceCommand.Type.RESUME : VoiceCommand.Type.CHAT; break;
+                    : post.isEmpty() && reply.isEmpty() ? VoiceCommand.Type.RESUME : VoiceCommand.Type.CHAT; break;
             case "radio":  action = query.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.RADIO; break;
             case "mix":    action = VoiceCommand.Type.MIX; break;
             case "skip":   action = VoiceCommand.Type.SKIP; break;
@@ -293,9 +322,12 @@ public class LlmClient
             case "resume": action = VoiceCommand.Type.RESUME; break;
             case "stop":   action = VoiceCommand.Type.STOP; break;
             case "research": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.RESEARCH; break;
+            case "remind": action = task.isEmpty() || minutes <= 0 ? VoiceCommand.Type.CHAT : VoiceCommand.Type.REMIND; break;
+            case "cancel_reminders": action = VoiceCommand.Type.CANCEL_REMINDERS; break;
+            case "forget": action = VoiceCommand.Type.FORGET; break;
             default:       action = VoiceCommand.Type.CHAT;
         }
-        return new Decision(action, query, task, post, reply, 0);
+        return new Decision(action, query, task, minutes, remember, post, reply, 0);
     }
 
     /** Strips markdown and emoji so the reply reads cleanly through text-to-speech. */

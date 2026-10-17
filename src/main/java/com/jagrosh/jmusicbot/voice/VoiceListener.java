@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Consumer;
 import net.dv8tion.jda.api.audio.AudioReceiveHandler;
 import net.dv8tion.jda.api.audio.UserAudio;
 import net.dv8tion.jda.api.entities.User;
@@ -47,6 +48,8 @@ public class VoiceListener implements AudioReceiveHandler
     static final long MAX_SILENCE_MS = 1500;
     static final float COMPLETE = 0.5f;
     static final long MIN_SPEECH_MS = 400;
+    // this much speech while the bot is answering them is someone talking over it
+    static final long TALKING_MS = 600;
     static final long MAX_UTTERANCE_MS = 20_000;
     // below this RMS a frame is background noise, not speech
     static final double SPEECH_RMS = 500;
@@ -72,20 +75,24 @@ public class VoiceListener implements AudioReceiveHandler
         // whether one is running
         int checks;
         boolean checking;
+        boolean talking; // onTalking has been called for this utterance
     }
 
     private final Map<User, Utterance> active = new ConcurrentHashMap<>();
     private final Handler handler;
+    private final Consumer<User> onTalking;
     private final SmartTurn smartTurn;
     private final ExecutorService checker;
 
     /**
      * @param smartTurn the end-of-turn model, or null to use a fixed silence
      * @param checker runs the model, off the polling thread
+     * @param onTalking called once an utterance has TALKING_MS of speech, before it ends
      */
-    public VoiceListener(Handler handler, SmartTurn smartTurn, ExecutorService checker)
+    public VoiceListener(Handler handler, Consumer<User> onTalking, SmartTurn smartTurn, ExecutorService checker)
     {
         this.handler = handler;
+        this.onTalking = onTalking;
         this.smartTurn = smartTurn;
         this.checker = checker;
     }
@@ -123,6 +130,11 @@ public class VoiceListener implements AudioReceiveHandler
                 u.speechEnd = u.pcm.size();
                 u.speechMs += VoiceAudio.durationMs(frame.length);
                 u.checks = 0; // a new pause will need new checks
+            }
+            if (u.speechMs >= TALKING_MS && !u.talking)
+            {
+                u.talking = true;
+                onTalking.accept(user);
             }
         }
         if (VoiceAudio.durationMs(u.pcm.size()) >= MAX_UTTERANCE_MS)

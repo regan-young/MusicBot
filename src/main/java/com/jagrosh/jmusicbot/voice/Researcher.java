@@ -75,6 +75,14 @@ public class Researcher
             + "or lists in what you say; mention it if you posted something. If you couldn't find a good answer, "
             + "say so honestly rather than guessing.";
 
+    // the same job asked by text: the answer is posted as a reply
+    static final String TEXT_INSTRUCTIONS = "\n\nIn the Discord text channel, %s asked you something and you said "
+            + "you'd look into it. Work on it now. Search the web when it needs current or factual information (one or "
+            + "two searches are usually enough) and think it through properly. Then reply with your answer, which will "
+            + "be posted as a reply to them: up to about eight sentences or a short list, Discord markdown and links "
+            + "welcome, with the most useful links. Don't use post_message. If you couldn't find a good answer, say so "
+            + "honestly rather than guessing.";
+
     private static final JSONArray TOOLS = new JSONArray()
             .put(new JSONObject().put("type", "openrouter:web_search").put("parameters", new JSONObject().put("max_results", 4)))
             .put(new JSONObject().put("type", "openrouter:datetime"))
@@ -114,14 +122,16 @@ public class Researcher
      * @param task what to find out, as the chat LLM described it
      * @param context what they said and the recent conversation
      * @param post posts a message in the text channel and returns the tool result to give the model
+     * @param spoken whether the answer will be spoken (from ?chat) or posted (asked by text)
      */
-    public CompletableFuture<Result> research(String speaker, String task, String context, Function<String, String> post)
+    public CompletableFuture<Result> research(String speaker, String task, String context, Function<String, String> post,
+            boolean spoken)
     {
         return CompletableFuture.supplyAsync(() ->
         {
             try
             {
-                return run(speaker, task, context, post);
+                return run(speaker, task, context, post, spoken);
             }
             catch (IOException e)
             {
@@ -135,11 +145,12 @@ public class Researcher
         }, runner);
     }
 
-    private Result run(String speaker, String task, String context, Function<String, String> post)
+    private Result run(String speaker, String task, String context, Function<String, String> post, boolean spoken)
             throws IOException, InterruptedException
     {
         JSONArray messages = new JSONArray()
-                .put(new JSONObject().put("role", "system").put("content", persona + String.format(INSTRUCTIONS, speaker, speaker)))
+                .put(new JSONObject().put("role", "system").put("content", persona + (spoken ? String.format(INSTRUCTIONS, speaker, speaker)
+                        : String.format(TEXT_INSTRUCTIONS, speaker))))
                 .put(new JSONObject().put("role", "user").put("content", "Task: " + task + "\n\n" + context));
         Set<String> sources = new LinkedHashSet<>();
         int searches = 0, posts = 0;
@@ -186,7 +197,10 @@ public class Researcher
             JSONArray calls = message.optJSONArray("tool_calls");
             if (calls == null || calls.isEmpty())
             {
-                String say = LlmClient.forSpeech(message.optString("content", "").replaceAll("https?://\\S+", ""));
+                String content = message.optString("content", "").trim();
+                if (!spoken)
+                    return new Result(content, new ArrayList<>(sources), searches, posts, cost);
+                String say = LlmClient.forSpeech(content.replaceAll("https?://\\S+", ""));
                 // it sometimes says it posted when it ran out of tool calls first; make that true
                 if (posts == 0 && CLAIMS_POST.matcher(say).find())
                 {
