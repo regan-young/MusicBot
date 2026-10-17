@@ -43,9 +43,10 @@ public final class VoiceCommand
         this.addressed = addressed;
     }
 
-    // the bot's names, and the ways STT tends to spell "gunnabot"
+    // the bot's names. Speech-to-text mangles "Gunnabot" into gunnerbot,
+    // annabot, guttabot, gonna bot..., so any word ending in -abot/-erbot counts.
     private static final Pattern WAKE = Pattern.compile(
-            "\\b(?:(?:hey|hi|ok|okay|oi)\\s+)?(?:(?:gunna|gunner|gonna|guna|gunnar)\\s?bot|robot|bot|clankers?)\\b");
+            "\\b(?:(?:hey|hi|ok|okay|oi)\\s+)?(?:\\p{L}{2,}(?:a|ah|er|uh)\\s?bot|robot|bot|clankers?)\\b");
     private static final Pattern PUNCTUATION = Pattern.compile("[^\\p{L}\\p{N}'\\s]");
 
     public static VoiceCommand parse(String transcript)

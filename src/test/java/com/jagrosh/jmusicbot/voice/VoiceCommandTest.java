@@ -56,6 +56,10 @@ public class VoiceCommandTest
         assertTrue(VoiceCommand.parse("What do you think, robot?").addressed);
         assertTrue(VoiceCommand.parse("Hey clanker, play some jazz").addressed);
         assertTrue(VoiceCommand.parse("Bot. Pause.").addressed);
+        // real transcriptions of "Gunnabot" from the logs
+        assertTrue(VoiceCommand.parse("Annabot, I think you have trouble with the New Zealand accent.").addressed);
+        assertTrue(VoiceCommand.parse("A guttabot, tell us a joke.").addressed);
+        assertTrue(VoiceCommand.parse("Gunnerbot, read me a summary").addressed);
         assertEquals(Type.PLAY, VoiceCommand.parse("Hey clanker, play some jazz").type);
         assertEquals("some jazz", VoiceCommand.parse("Hey clanker, play some jazz").arg);
         assertEquals(Type.PAUSE, VoiceCommand.parse("Bot. Pause.").type);
