@@ -18,8 +18,15 @@ services:
     environment:
       # yt-dlp writes its cache under $HOME; uid 1000 has no home in the image
       HOME: /tmp
+    # Ships logs to the homelab Loki (Grafana → Explore → {container_name="musicbot"}).
+    # docker logs still works from Docker's local cache. Non-blocking, so a Loki
+    # outage drops log lines instead of stalling the bot.
     logging:
-      driver: json-file
+      driver: loki
       options:
+        loki-url: "http://192.168.0.100:3100/loki/api/v1/push"
+        loki-retries: "2"
+        mode: non-blocking
+        max-buffer-size: 4m
         max-size: 10m
         max-file: "3"
