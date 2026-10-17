@@ -52,7 +52,7 @@ public class VoiceRouter
 
     /** Commands the router may pick. "chat" goes to the conversational LLM, "none" is ignored. */
     static final Set<String> COMMANDS = Set.of("play", "radio", "mix", "skip", "pause", "resume", "stop",
-            "volume", "shuffle", "hush", "chat", "none");
+            "volume", "shuffle", "hush", "leave", "chat", "none");
 
     static final String SYSTEM = "You route voice chat for Gunnabot, a music bot in a Discord voice channel with "
             + "several friends. Speech recognition is imperfect: the bot's name may come out as Gunnabot, Gunnerbot, "
@@ -74,7 +74,10 @@ public class VoiceRouter
             + "- skip: skip the current song\n"
             + "- pause: pause the music for now\n"
             + "- resume: continue paused music\n"
-            + "- stop: stop the music and clear the queue\n"
+            + "- stop: stop the music and clear the queue (the bot stays in the channel)\n"
+            + "- leave: the bot should leave the voice channel (\"bot, you can go\", \"gunnabot, disconnect\", "
+            + "\"get out of here, clanker\"). Only when they tell the bot to leave; someone saying they're leaving "
+            + "themselves is none\n"
             + "- volume: change the volume. args: the new number 0-150. The current volume is on the Player line; "
             + "\"up a bit\" is about 20 more, \"down a bit\" about 20 less\n"
             + "- shuffle: shuffle the queue\n"

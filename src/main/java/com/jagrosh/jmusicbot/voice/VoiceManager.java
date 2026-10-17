@@ -187,6 +187,7 @@ public class VoiceManager
     private final ExecutorService llmCalls = Executors.newCachedThreadPool(r -> daemon(r, "voice-llm"));
     // bumped by "hush" so queued speech is dropped
     private final Map<Long, AtomicInteger> speechEpochs = new ConcurrentHashMap<>();
+    private final Map<Long, AtomicInteger> speechQueued = new ConcurrentHashMap<>();
     private final SmartTurn smartTurn;
     // end-of-turn checks take ~30 ms of CPU each; one at a time is plenty
     private final ExecutorService turnChecks = Executors.newSingleThreadExecutor(r -> daemon(r, "voice-turn"));
@@ -336,10 +337,15 @@ public class VoiceManager
     private void say(long guildId, String part, long heardAt, int asked)
     {
         AtomicInteger epoch = epoch(guildId);
+        AtomicInteger queued = queued(guildId);
+        queued.incrementAndGet();
         speech.submit(() ->
         {
             if (epoch.get() != asked)
+            {
+                queued.decrementAndGet();
                 return; // hushed
+            }
             try
             {
                 long start = System.currentTimeMillis();
@@ -354,6 +360,10 @@ public class VoiceManager
             catch (Exception e)
             {
                 LOG.warn("TTS request failed", e);
+            }
+            finally
+            {
+                queued.decrementAndGet();
             }
         });
     }
@@ -401,6 +411,32 @@ public class VoiceManager
                 try { Files.deleteIfExists(file); } catch (Exception ignored) {}
             }
         });
+    }
+
+    /**
+     * Leaves the voice channel (stopping the music and ?chat) once the
+     * goodbye has been said: it waits until no speech is being synthesised
+     * or playing, twice in a row, or 8 seconds.
+     */
+    private void leaveAfterGoodbye(Guild guild, long since, int quietChecks)
+    {
+        long guildId = guild.getIdLong();
+        boolean quiet = queued(guildId).get() == 0 && bot.getPlayerManager().setUpHandler(guild).getSpeaker().isIdle();
+        int checks = quiet ? quietChecks + 1 : 0;
+        if (checks < 2 && System.currentTimeMillis() - since < 8000)
+        {
+            ticker.schedule(() -> leaveAfterGoodbye(guild, since, checks), 200, TimeUnit.MILLISECONDS);
+            return;
+        }
+        LOG.info("Leaving the voice channel, as asked");
+        bot.getPlayerManager().setUpHandler(guild).stopAndClear();
+        bot.closeAudioConnection(guildId);
+    }
+
+    /** Sentences waiting to be synthesised and queued, per guild. */
+    private AtomicInteger queued(long guildId)
+    {
+        return speechQueued.computeIfAbsent(guildId, id -> new AtomicInteger());
     }
 
     /** Stops the bot talking: drops queued speech and cuts off the current clip. Music carries on. */
@@ -802,6 +838,10 @@ public class VoiceManager
                 return;
             case "hush":
                 hush(guild);
+                return;
+            case "leave":
+                speak(guild, "Okay, I'm off. Catch you later.", heardAt);
+                leaveAfterGoodbye(guild, System.currentTimeMillis(), 0);
                 return;
             case "volume":
                 if (!args.matches("\\d{1,3}"))

@@ -75,7 +75,8 @@ public class AloneInVoiceHandler
             }
 
             ((AudioHandler) guild.getAudioManager().getSendingHandler()).stopAndClear();
-            guild.getAudioManager().closeAudioConnection();
+            // through the bot, so ?chat stops listening too
+            bot.closeAudioConnection(guild.getIdLong());
 
             toRemove.add(entrySet.getKey());
         }

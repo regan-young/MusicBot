@@ -19,27 +19,39 @@ import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.commands.DJCommand;
+import java.util.Arrays;
 
 /**
  *
  * @author John Grosh <john.a.grosh@gmail.com>
  */
-public class StopCmd extends DJCommand 
+public class StopCmd extends DJCommand
 {
     public StopCmd(Bot bot)
     {
         super(bot);
         this.name = "stop";
         this.help = "stops the current song and clears the queue";
-        this.aliases = bot.getConfig().getAliases(this.name);
+        // "leave" is its own command now; older configs still list it as an
+        // alias here, and a duplicate would stop the command client starting
+        this.aliases = Arrays.stream(bot.getConfig().getAliases(this.name))
+                .filter(a -> !a.equalsIgnoreCase("leave"))
+                .toArray(String[]::new);
         this.bePlaying = false;
     }
 
     @Override
-    public void doCommand(CommandEvent event) 
+    public void doCommand(CommandEvent event)
     {
         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
         handler.stopAndClear();
+        if (bot.getVoiceManager().isListening(event.getGuild().getIdLong()))
+        {
+            // ?chat is on: stay in the channel and keep listening
+            event.reply(event.getClient().getSuccess()+" The player has stopped and the queue has been cleared. "
+                    + "I'm staying for the chat; `"+event.getClient().getPrefix()+"leave` when you're done.");
+            return;
+        }
         event.getGuild().getAudioManager().closeAudioConnection();
         event.reply(event.getClient().getSuccess()+" The player has stopped and the queue has been cleared.");
     }

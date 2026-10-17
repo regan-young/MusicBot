@@ -63,7 +63,8 @@ public class ChatCmd extends MusicCommand
                     ? "Try *bot, play Fleetwood Mac*, *bot, skip*, *pause*, *resume* or *stop*."
                     : "Ask me anything, or ask for music however you like, e.g. *robot, put on some Six60*.");
         event.replySuccess("🎙️ Listening in " + event.getMember().getVoiceState().getChannel().getAsMention()
-                + ". " + how + " `" + prefix + name + "` again to stop.");
+                + ". " + how + " `" + prefix + name + "` again to stop listening; I'll stay in the channel until you tell me "
+                + "to leave (or `" + prefix + "leave`).");
         voice.speak(event.getGuild(), "Gunnabot's here. What are we listening to?");
     }
 }
