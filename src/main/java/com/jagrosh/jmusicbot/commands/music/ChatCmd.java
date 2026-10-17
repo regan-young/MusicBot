@@ -19,16 +19,16 @@ import com.jagrosh.jmusicbot.commands.MusicCommand;
 import com.jagrosh.jmusicbot.voice.VoiceManager;
 
 /**
- * Toggles voice interaction: the bot listens in its voice channel, posts what
- * it hears, and answers out loud or runs playback commands.
+ * Toggles voice chat: the bot listens in its voice channel and answers out
+ * loud, runs playback commands, and looks things up to come back to later.
  */
-public class InteractCmd extends MusicCommand
+public class ChatCmd extends MusicCommand
 {
-    public InteractCmd(Bot bot)
+    public ChatCmd(Bot bot)
     {
         super(bot);
-        this.name = "interact";
-        this.help = "talk with me in voice: I listen, answer out loud and take music requests (run again to stop)";
+        this.name = "chat";
+        this.help = "talk with me in voice: I listen, answer out loud, look things up and take music requests (run again to stop)";
         this.aliases = bot.getConfig().getAliases(this.name);
         this.beListening = true;
         this.bePlaying = false;
@@ -56,7 +56,7 @@ public class InteractCmd extends MusicCommand
         if (voice.hasRouter())
             how = "Just talk: I'll work out when you're talking to me, and saying *Gunnabot*, *bot*, *robot* or "
                     + "*clanker* always gets my attention. Ask for music however you like, e.g. *put on some Six60* or "
-                    + "*chuck on RNZ*.";
+                    + "*chuck on RNZ*. Ask me to look something up and I'll come back with it.";
         else
             how = "I only respond when you call me *Gunnabot*, *bot*, *robot* or *clanker*. "
                     + (voice.getLlmModel() == null
@@ -64,6 +64,6 @@ public class InteractCmd extends MusicCommand
                     : "Ask me anything, or ask for music however you like, e.g. *robot, put on some Six60*.");
         event.replySuccess("🎙️ Listening in " + event.getMember().getVoiceState().getChannel().getAsMention()
                 + ". " + how + " `" + prefix + name + "` again to stop.");
-        voice.speak(event.getGuild(), "Gunnabot here. Say my name if you need me.");
+        voice.speak(event.getGuild(), "Gunnabot's here. What are we listening to?");
     }
 }

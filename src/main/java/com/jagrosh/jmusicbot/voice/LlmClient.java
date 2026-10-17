@@ -48,9 +48,10 @@ public class LlmClient
 
     // Appended to the configurable persona prompt; the code depends on this format.
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
-            + "only a JSON object, no other text: {\"action\": one of \"play\", \"radio\", \"mix\", \"skip\", \"pause\", "
-            + "\"resume\", \"stop\", \"chat\"; \"query\": what to search for (play, radio and mix only, otherwise empty); "
-            + "\"reply\": what to say out loud}. "
+            + "only a JSON object, no other text, with the keys in this order: {\"action\": one of \"play\", \"radio\", "
+            + "\"mix\", \"skip\", \"pause\", \"resume\", \"stop\", \"research\", \"chat\"; \"query\": what to search "
+            + "for (play, radio and mix only, otherwise empty); \"task\": for research only, otherwise empty; \"post\": "
+            + "text to post in the Discord text channel, usually empty; \"reply\": what to say out loud}. "
             + "Use play when they want a song, artist or album played or queued (query = what to search YouTube for), "
             + "radio for a live radio station or radio of a genre (query = station name or genre), mix for several "
             + "songs like a song or artist (query = that song or artist, empty for like what's playing), "
@@ -62,6 +63,16 @@ public class LlmClient
             + "a vague phrase. Use chat for everything else, including questions "
             + "about the current song, which is given in the context. Only choose a music action when they clearly "
             + "ask for it; otherwise chat. For music actions keep reply to a few words, like \"Skipping.\" "
+            + "Use research when a good answer needs information you'd have to look up (news, sport results, "
+            + "weather, prices, opening hours, release dates, anything recent or that you aren't sure of) or "
+            + "careful thought (detailed explanations, comparisons, plans, recommendations they want done properly). "
+            + "Then task = a self-contained description of what to find out or work through, with the details from "
+            + "the conversation, and reply = a short, natural holding line, as a person would say before going to "
+            + "check (\"Good question, let me look that up.\", \"Give me a minute on that one.\"); vary it. You'll "
+            + "come back with the answer by yourself, so don't promise a time. Don't research small talk or things "
+            + "you already know (capitals, definitions, history, how things work): just answer. Use post when they ask you to post, send, write down or share something in the chat, "
+            + "or when a link or list is far easier to read than hear: plain text and links, no @mentions; then say "
+            + "you've posted it; a request only to post something is chat. "
             + "People call you Gunnabot, bot, robot or clanker. Every message you see was said to you, though not "
             + "always by name; the recent channel conversation in the context shows what they're responding to.";
 
@@ -102,19 +113,22 @@ public class LlmClient
     public static class Decision
     {
         public final VoiceCommand.Type action;
-        public final String query, reply;
+        /** query: a music search; task: what to research; post: text for the Discord channel */
+        public final String query, task, post, reply;
         /** How many sentences of the reply were already spoken while it streamed in. */
         public final int streamed;
 
         Decision(VoiceCommand.Type action, String query, String reply)
         {
-            this(action, query, reply, 0);
+            this(action, query, "", "", reply, 0);
         }
 
-        Decision(VoiceCommand.Type action, String query, String reply, int streamed)
+        Decision(VoiceCommand.Type action, String query, String task, String post, String reply, int streamed)
         {
             this.action = action;
             this.query = query;
+            this.task = task;
+            this.post = post;
             this.reply = reply;
             this.streamed = streamed;
         }
@@ -123,6 +137,16 @@ public class LlmClient
     public class Conversation
     {
         private final Deque<JSONObject> history = new ArrayDeque<>();
+
+        /** Adds something the bot said outside a decide() call (a research answer) to the history. */
+        public synchronized void remember(String said)
+        {
+            JSONObject reply = new JSONObject().put("action", "chat").put("query", "").put("task", "")
+                    .put("post", "").put("reply", said);
+            history.add(new JSONObject().put("role", "assistant").put("content", reply.toString()));
+            while (history.size() > HISTORY_MESSAGES)
+                history.removeFirst();
+        }
 
         /**
          * Classifies what a speaker said and writes the reply, keeping both in
@@ -188,7 +212,7 @@ public class LlmClient
                             history.removeFirst();
                     }
                     Decision d = parseDecision(content);
-                    return new Decision(d.action, d.query, d.reply, reply.sentences());
+                    return new Decision(d.action, d.query, d.task, d.post, d.reply, reply.sentences());
                 }
                 catch (IOException | UncheckedIOException e)
                 {
@@ -253,20 +277,25 @@ public class LlmClient
             return new Decision(VoiceCommand.Type.CHAT, "", content.trim());
         }
         String query = o.optString("query", "").trim();
+        String task = o.optString("task", "").trim();
+        String post = o.optString("post", "").trim();
         String reply = o.optString("reply", "").trim();
         VoiceCommand.Type action;
         switch (o.optString("action", "chat").trim().toLowerCase(Locale.ROOT))
         {
-            case "play":   action = query.isEmpty() ? VoiceCommand.Type.RESUME : VoiceCommand.Type.PLAY; break;
+            // models sometimes label "post that link" as play with no query; that isn't "resume"
+            case "play":   action = !query.isEmpty() ? VoiceCommand.Type.PLAY
+                    : post.isEmpty() ? VoiceCommand.Type.RESUME : VoiceCommand.Type.CHAT; break;
             case "radio":  action = query.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.RADIO; break;
             case "mix":    action = VoiceCommand.Type.MIX; break;
             case "skip":   action = VoiceCommand.Type.SKIP; break;
             case "pause":  action = VoiceCommand.Type.PAUSE; break;
             case "resume": action = VoiceCommand.Type.RESUME; break;
             case "stop":   action = VoiceCommand.Type.STOP; break;
+            case "research": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.RESEARCH; break;
             default:       action = VoiceCommand.Type.CHAT;
         }
-        return new Decision(action, query, reply);
+        return new Decision(action, query, task, post, reply, 0);
     }
 
     /** Strips markdown and emoji so the reply reads cleanly through text-to-speech. */

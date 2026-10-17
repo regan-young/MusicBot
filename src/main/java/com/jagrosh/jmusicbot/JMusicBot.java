@@ -191,7 +191,7 @@ public class JMusicBot {
                         new PingCommand(),
                         new SettingsCmd(bot),
 
-                        new InteractCmd(bot),
+                        new ChatCmd(bot),
                         new LyricsCmd(bot),
                         new MixCmd(bot),
                         new NowplayingCmd(bot),

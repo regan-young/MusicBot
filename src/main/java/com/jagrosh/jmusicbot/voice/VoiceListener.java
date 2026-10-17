@@ -129,6 +129,12 @@ public class VoiceListener implements AudioReceiveHandler
             finish(user, u, "max length");
     }
 
+    /** Whether anyone is mid-utterance right now. */
+    public boolean isAnyoneSpeaking()
+    {
+        return !active.isEmpty();
+    }
+
     /** Whether this user is mid-utterance right now. */
     public boolean isSpeaking(User user)
     {

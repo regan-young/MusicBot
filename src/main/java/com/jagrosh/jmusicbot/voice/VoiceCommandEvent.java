@@ -35,7 +35,7 @@ import net.dv8tion.jda.api.utils.messages.MessageCreateData;
  * A command invocation that came from speech rather than a message, so a
  * spoken request runs the real command (?play, ?radio, ...) with its usual
  * checks, as the person who said it. Replies go to the text channel
- * ?interact was started in, like any command output; text replies are also
+ * ?chat was started in, like any command output; text replies are also
  * passed to a listener so error messages can be spoken. Modelled on
  * {@link com.jagrosh.jmusicbot.commands.InteractionCommandEvent}.
  */

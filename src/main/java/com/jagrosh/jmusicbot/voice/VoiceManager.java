@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -50,7 +51,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Voice features: ?say (text-to-speech) and ?interact, which listens to the
+ * Voice features: ?say (text-to-speech) and ?chat, which listens to the
  * voice channel and lets people talk to the bot naturally.
  *
  * Each utterance is transcribed ({@link VoiceApi}), then a small local LLM
@@ -76,6 +77,11 @@ public class VoiceManager
     private static final long STALE_MS = 10_000;
     // after just the bot's name, how long to wait for the rest before saying "Yes?"
     private static final long NAME_WAIT_MS = 1500;
+    // research answers wait for a lull: nobody talking for this long...
+    private static final long LULL_MS = 1200;
+    // ...but no longer than this
+    private static final long MAX_LULL_WAIT_MS = 30_000;
+    private static final int MAX_RESEARCH = 3;
 
     private static class Line
     {
@@ -120,6 +126,9 @@ public class VoiceManager
         final Map<Long, Turn> turns = new ConcurrentHashMap<>();
         private volatile long lastSpoke;
         private volatile long lastAnswered; // user id of the last person the bot responded to
+        private volatile long lastHeard;    // when anyone last said something
+        // things the bot said it would look into and hasn't answered yet
+        final Set<CompletableFuture<Researcher.Result>> research = ConcurrentHashMap.newKeySet();
 
         Session(MessageChannel channel, VoiceListener listener, ScheduledFuture<?> poller, LlmClient.Conversation conversation)
         {
@@ -165,6 +174,7 @@ public class VoiceManager
     private final VoiceApi api;
     private final LlmClient llm;
     private final VoiceRouter router;
+    private final Researcher researcher;
     private volatile CommandClient client;
     private final Map<Long, Session> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService ticker = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "voice-ticker"));
@@ -196,6 +206,9 @@ public class VoiceManager
         this.router = routerUrl == null || routerUrl.isBlank() ? null
                 : new VoiceRouter(routerUrl, routerKey, config.getRouterModel());
         this.smartTurn = loadSmartTurn(config.getSmartTurnModel());
+        // web search is an OpenRouter server tool
+        this.researcher = llm == null || !config.getLlmApi().contains("openrouter.ai") ? null
+                : new Researcher(config.getLlmApi(), key, config.getResearchModel(), config.getLlmPrompt());
     }
 
     private static SmartTurn loadSmartTurn(String model)
@@ -228,7 +241,7 @@ public class VoiceManager
         this.client = client;
     }
 
-    /** The LLM model ?interact talks to, or null when there's no LLM configured. */
+    /** The LLM model ?chat talks to, or null when there's no LLM configured. */
     public String getLlmModel()
     {
         return llm == null ? null : llm.getModel();
@@ -284,6 +297,7 @@ public class VoiceManager
             return;
         s.poller.cancel(false);
         s.turns.values().forEach(t -> t.pending.cancel(true));
+        s.research.forEach(r -> r.cancel(true));
         guild.getAudioManager().setReceivingHandler(null);
     }
 
@@ -453,6 +467,7 @@ public class VoiceManager
         long sttMs = System.currentTimeMillis() - start;
         long audioMs = VoiceAudio.durationMs(wav.length - 44);
         long uid = user.getIdLong();
+        session.lastHeard = System.currentTimeMillis();
 
         Member member = guild.getMember(user);
         String name = member != null ? member.getEffectiveName() : user.getName();
@@ -583,7 +598,15 @@ public class VoiceManager
                     speak(guild, "Sorry, my brain isn't responding right now.");
                 return;
             }
-            LOG.info("LLM {} ms: {} [{}] {}", System.currentTimeMillis() - asked, d.action, d.query, d.reply);
+            LOG.info("LLM {} ms: {} [{}] {}", System.currentTimeMillis() - asked, d.action,
+                    d.action == VoiceCommand.Type.RESEARCH ? d.task : d.query, d.reply);
+            if (!d.post.isEmpty())
+                post(session, d.post);
+            if (d.action == VoiceCommand.Type.RESEARCH)
+            {
+                research(guild, session, user, name, said, d.task, LlmClient.forSpeech(d.reply), player, heardAt);
+                return;
+            }
             if (streamed)
             {
                 // already spoken; just remember it for the router and follow-ups
@@ -593,6 +616,86 @@ public class VoiceManager
             }
             runDecision(guild, member, session, d.action, d.query, LlmClient.forSpeech(d.reply), heardAt);
         }, llmCalls);
+    }
+
+    /**
+     * Something that needs looking up or thinking about: say a holding line,
+     * work on it in the background, and come back with the answer when
+     * there's a gap in the conversation, like a person who went to check.
+     */
+    private void research(Guild guild, Session session, User user, String name, String said, String task, String holding,
+            String player, long heardAt)
+    {
+        if (researcher == null)
+        {
+            speak(guild, "I can't look things up at the moment, sorry.", heardAt);
+            return;
+        }
+        if (session.research.size() >= MAX_RESEARCH)
+        {
+            speak(guild, "I'm still working on a few things. Ask me again in a minute.", heardAt);
+            return;
+        }
+        speak(guild, holding.isEmpty() ? "Let me look into that." : holding, heardAt);
+        String context = "What " + name + " said: " + said + "\nPlayer: " + player
+                + "\nRecent conversation in the voice channel:\n" + String.join("\n", session.recent());
+        long start = System.currentTimeMillis();
+        LOG.info("Researching for {} with {}: {}", name, researcher.getModel(), task);
+        CompletableFuture<Researcher.Result> job = researcher.research(name, task, context, text -> post(session, text));
+        session.research.add(job);
+        job.whenComplete((r, e) ->
+        {
+            session.research.remove(job);
+            if (job.isCancelled() || sessions.get(guild.getIdLong()) != session)
+                return; // they stopped ?chat
+            long secs = (System.currentTimeMillis() - start) / 1000;
+            if (e != null || r.say.isBlank())
+            {
+                LOG.warn("Research failed after {} s: {}", secs, task, e);
+                deliver(guild, session, user, "Sorry " + name + ", I couldn't find a good answer to that one.", System.currentTimeMillis());
+                return;
+            }
+            LOG.info("Research done in {} s ({} searches, {} posts, ${}): {} Sources: {}", secs, r.searches, r.posts,
+                    String.format("%.4f", r.cost), r.say, r.sources);
+            deliver(guild, session, user, r.say, System.currentTimeMillis());
+        });
+    }
+
+    /** Says a research answer once nobody's talking (or after MAX_LULL_WAIT_MS), and treats it as answering them. */
+    private void deliver(Guild guild, Session session, User user, String say, long since)
+    {
+        if (sessions.get(guild.getIdLong()) != session)
+            return;
+        long now = System.currentTimeMillis();
+        boolean busy = session.listener.isAnyoneSpeaking() || !session.turns.isEmpty()
+                || now - session.lastHeard < LULL_MS || now - session.lastSpoke < LULL_MS
+                || !bot.getPlayerManager().setUpHandler(guild).getSpeaker().isIdle();
+        if (busy && now - since < MAX_LULL_WAIT_MS)
+        {
+            ticker.schedule(() -> deliver(guild, session, user, say, since), 250, TimeUnit.MILLISECONDS);
+            return;
+        }
+        session.lastAnswered = user.getIdLong(); // so their reply to it counts as a follow-up
+        if (session.conversation != null)
+            session.conversation.remember(say);
+        speak(guild, say);
+    }
+
+    /** Posts in the session's text channel, with no pings. Returns the result for the LLM. */
+    private String post(Session session, String text)
+    {
+        try
+        {
+            session.channel.sendMessage(text).setAllowedMentions(List.of()).queue(
+                    m -> LOG.info("Posted in #{}: {}", session.channel.getName(), text.replace('\n', ' ')),
+                    e -> LOG.warn("Could not post in #{}", session.channel.getName(), e));
+            return "Posted.";
+        }
+        catch (Exception e)
+        {
+            LOG.warn("Could not post in #{}", session.channel.getName(), e);
+            return "Posting failed: " + e.getMessage();
+        }
     }
 
     /**

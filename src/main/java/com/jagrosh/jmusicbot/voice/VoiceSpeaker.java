@@ -45,6 +45,12 @@ public class VoiceSpeaker extends AudioEventAdapter
         return player;
     }
 
+    /** Whether it's quiet: nothing playing and nothing queued. */
+    public synchronized boolean isIdle()
+    {
+        return player.getPlayingTrack() == null && pending.isEmpty();
+    }
+
     public synchronized void enqueue(AudioTrack track)
     {
         if (!player.startTrack(track, true))
