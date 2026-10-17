@@ -47,4 +47,21 @@ public class VoiceCommandTest
         // a command word mid-sentence is not a command
         assertEquals(Type.CHAT, VoiceCommand.parse("I don't want to stop yet").type);
     }
+
+    @Test
+    public void wakeWordMarksAddressed()
+    {
+        assertTrue(VoiceCommand.parse("Gunna, what's the weather like?").addressed);
+        assertTrue(VoiceCommand.parse("hey gunner skip").addressed);
+        assertFalse(VoiceCommand.parse("what's the weather like?").addressed);
+        // the LLM gets the transcript as spoken, wake word included
+        assertEquals("Gunna, what's the weather like?", VoiceCommand.parse("Gunna, what's the weather like?").arg);
+    }
+
+    @Test
+    public void forSpeechStripsMarkdownAndEmoji()
+    {
+        assertEquals("Sure, here's the plan: rest up.", LlmClient.forSpeech("**Sure**, here's the _plan_: rest up. 😀"));
+        assertEquals("See the docs for more.", LlmClient.forSpeech("See [the docs](https://example.com) for more."));
+    }
 }

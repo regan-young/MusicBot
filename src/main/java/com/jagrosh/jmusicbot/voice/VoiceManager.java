@@ -33,6 +33,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.GuildVoiceState;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
@@ -42,9 +43,11 @@ import org.slf4j.LoggerFactory;
 /**
  * Voice features: ?say (text-to-speech) and ?interact, which listens to the
  * voice channel, transcribes each utterance, posts it, and either runs it as
- * a playback command or answers out loud. Speech runs on an external
- * OpenAI-compatible server (see {@link VoiceApi}); without one configured
- * the commands just say so.
+ * a playback command or passes it to the LLM and speaks the reply. Speech
+ * runs on an external OpenAI-compatible server (see {@link VoiceApi}) and the
+ * LLM on OpenRouter (see {@link LlmClient}). With several people in the
+ * channel the bot only answers when addressed ("gunna, ...") so it doesn't
+ * reply to every bit of chatter.
  */
 public class VoiceManager
 {
@@ -55,17 +58,20 @@ public class VoiceManager
         final VoiceListener listener;
         final MessageChannel channel;
         final ScheduledFuture<?> poller;
+        final LlmClient.Conversation conversation;
 
-        Session(VoiceListener listener, MessageChannel channel, ScheduledFuture<?> poller)
+        Session(VoiceListener listener, MessageChannel channel, ScheduledFuture<?> poller, LlmClient.Conversation conversation)
         {
             this.listener = listener;
             this.channel = channel;
             this.poller = poller;
+            this.conversation = conversation;
         }
     }
 
     private final Bot bot;
     private final VoiceApi api;
+    private final LlmClient llm;
     private final Map<Long, Session> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService ticker = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "voice-ticker"));
     // speech requests are slow-ish network calls; keep them off JDA's threads
@@ -77,6 +83,15 @@ public class VoiceManager
         String url = config.getVoiceApi();
         this.api = url == null || url.isBlank() ? null
                 : new VoiceApi(url, config.getVoiceSttModel(), config.getVoiceTtsModel(), config.getVoiceTtsVoice());
+        String key = config.getLlmKey();
+        this.llm = key == null || key.isBlank() ? null
+                : new LlmClient(config.getLlmApi(), key, config.getLlmModel(), config.getLlmPrompt(), config.getLlmMaxTokens());
+    }
+
+    /** The LLM model ?interact talks to, or null when there's no LLM configured. */
+    public String getLlmModel()
+    {
+        return llm == null ? null : llm.getModel();
     }
 
     public boolean isEnabled()
@@ -95,7 +110,7 @@ public class VoiceManager
         long guildId = guild.getIdLong();
         VoiceListener listener = new VoiceListener((user, wav) -> workers.submit(() -> onUtterance(guildId, user, wav)));
         ScheduledFuture<?> poller = ticker.scheduleAtFixedRate(listener::flushIdle, 100, 100, TimeUnit.MILLISECONDS);
-        sessions.put(guildId, new Session(listener, channel, poller));
+        sessions.put(guildId, new Session(listener, channel, poller, llm == null ? null : llm.newConversation()));
         guild.getAudioManager().setReceivingHandler(listener);
     }
 
@@ -219,8 +234,41 @@ public class VoiceManager
                 speak(guild, t == null ? "Nothing's playing." : "This is " + t.getInfo().title + ".");
                 break;
             default:
-                speak(guild, "You said: " + cmd.arg);
+                chat(guild, session, name, cmd);
         }
+    }
+
+    private void chat(Guild guild, Session session, String name, VoiceCommand cmd)
+    {
+        if (session.conversation == null)
+        {
+            speak(guild, "You said: " + cmd.arg);
+            return;
+        }
+        // in a group, only answer when spoken to
+        if (!cmd.addressed && humansInChannel(guild) > 1)
+            return;
+        try
+        {
+            String reply = session.conversation.reply(name, cmd.arg);
+            if (reply.isEmpty())
+                return;
+            session.channel.sendMessage(FormatUtil.filter("\uD83E\uDD16 **" + guild.getSelfMember().getEffectiveName() + ":** " + reply)).queue(); // 🤖
+            speak(guild, LlmClient.forSpeech(reply));
+        }
+        catch (Exception e)
+        {
+            LOG.warn("LLM request failed", e);
+            speak(guild, "Sorry, my brain isn't responding right now.");
+        }
+    }
+
+    private static long humansInChannel(Guild guild)
+    {
+        GuildVoiceState vs = guild.getSelfMember().getVoiceState();
+        if (vs == null || vs.getChannel() == null)
+            return 0;
+        return vs.getChannel().getMembers().stream().filter(m -> !m.getUser().isBot()).count();
     }
 
     private void play(Guild guild, AudioHandler handler, User user, String query, MessageChannel channel)

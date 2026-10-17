@@ -30,7 +30,10 @@ import org.json.JSONObject;
  */
 public class VoiceApi
 {
+    // HTTP/1.1: by default the client asks a plain-http server to upgrade to
+    // HTTP/2 (h2c), and uvicorn rejects those requests with 422
     private final HttpClient http = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(5)).build();
     private final String baseUrl, sttModel, ttsModel, ttsVoice;
 

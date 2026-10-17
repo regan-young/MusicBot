@@ -28,7 +28,7 @@ public class InteractCmd extends MusicCommand
     {
         super(bot);
         this.name = "interact";
-        this.help = "talk to me in voice: I transcribe what you say and answer out loud (run again to stop)";
+        this.help = "talk with me in voice: I listen, answer out loud and take music requests (run again to stop)";
         this.aliases = bot.getConfig().getAliases(this.name);
         this.beListening = true;
         this.bePlaying = false;
@@ -52,9 +52,11 @@ public class InteractCmd extends MusicCommand
         }
         voice.startListening(event.getGuild(), event.getChannel());
         String prefix = event.getClient().getPrefix();
+        String chat = voice.getLlmModel() == null ? "Anything else I'll repeat back."
+                : "Anything else, I'll answer (`" + voice.getLlmModel() + "`). With others in the channel, start with *Gunna* so I know you're talking to me.";
         event.replySuccess("🎙️ Listening in " + event.getMember().getVoiceState().getChannel().getAsMention()
-                + ". Try saying *play Fleetwood Mac*, *skip*, *pause*, *resume*, *stop* or *what's playing*. "
-                + "Anything else I'll repeat back. `" + prefix + name + "` again to stop.");
+                + ". Music: *play Fleetwood Mac*, *skip*, *pause*, *resume*, *stop*, *what's playing*. "
+                + chat + " `" + prefix + name + "` again to stop. Transcripts appear here.");
         voice.speak(event.getGuild(), "Hey, I'm listening.");
     }
 }

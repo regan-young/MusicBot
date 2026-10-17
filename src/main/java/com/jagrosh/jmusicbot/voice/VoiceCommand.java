@@ -14,13 +14,14 @@
 package com.jagrosh.jmusicbot.voice;
 
 import java.util.Locale;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Turns a transcript into a playback action. Speech-to-text output is loose
  * ("Gunna, skip.", "hey gunner play the beatles"), so this strips an optional
  * wake word and punctuation before matching. Anything unrecognised is CHAT,
- * which the bot answers by repeating it back.
+ * which goes to the LLM (or is repeated back when there isn't one).
  */
 public final class VoiceCommand
 {
@@ -29,11 +30,14 @@ public final class VoiceCommand
     public final Type type;
     /** The song query for PLAY, the original transcript for CHAT, otherwise empty. */
     public final String arg;
+    /** Whether the speaker started with the wake word ("gunna, ..."). */
+    public final boolean addressed;
 
-    private VoiceCommand(Type type, String arg)
+    private VoiceCommand(Type type, String arg, boolean addressed)
     {
         this.type = type;
         this.arg = arg;
+        this.addressed = addressed;
     }
 
     // "gunna", and the ways STT tends to spell it
@@ -46,26 +50,31 @@ public final class VoiceCommand
         String original = transcript == null ? "" : transcript.trim();
         String t = PUNCTUATION.matcher(original.toLowerCase(Locale.ROOT)).replaceAll(" ")
                 .replaceAll("\\s+", " ").trim();
-        t = WAKE.matcher(t).replaceFirst("").trim();
+        Matcher wake = WAKE.matcher(t);
+        boolean addressed = wake.find();
+        if (addressed)
+            t = t.substring(wake.end()).trim();
         t = t.replaceFirst("^(?:please|can you|could you)\\s+", "").trim();
 
+        t = t.replaceFirst("\\s+please$", "").trim();
+
         if (t.startsWith("play ") && t.length() > 5)
-            return new VoiceCommand(Type.PLAY, t.substring(5).trim());
+            return new VoiceCommand(Type.PLAY, t.substring(5).trim(), addressed);
         switch (t)
         {
             case "skip": case "skip it": case "skip this": case "skip this song": case "next": case "next song":
-                return new VoiceCommand(Type.SKIP, "");
+                return new VoiceCommand(Type.SKIP, "", addressed);
             case "pause": case "pause it": case "pause the music": case "pause music":
-                return new VoiceCommand(Type.PAUSE, "");
+                return new VoiceCommand(Type.PAUSE, "", addressed);
             case "resume": case "unpause": case "continue": case "play": case "resume the music":
-                return new VoiceCommand(Type.RESUME, "");
+                return new VoiceCommand(Type.RESUME, "", addressed);
             case "stop": case "stop the music": case "stop music": case "stop playing":
-                return new VoiceCommand(Type.STOP, "");
+                return new VoiceCommand(Type.STOP, "", addressed);
             case "what's playing": case "whats playing": case "what is playing": case "what song is this":
             case "what's this song": case "what is this song":
-                return new VoiceCommand(Type.NOW_PLAYING, "");
+                return new VoiceCommand(Type.NOW_PLAYING, "", addressed);
             default:
-                return new VoiceCommand(Type.CHAT, original);
+                return new VoiceCommand(Type.CHAT, original, addressed);
         }
     }
 }

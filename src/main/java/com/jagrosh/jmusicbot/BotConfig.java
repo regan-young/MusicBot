@@ -41,7 +41,9 @@ public class BotConfig
     private Path path = null;
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
-            evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice;
+            evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice,
+            llmApi, llmKey, llmModel, llmPrompt;
+    private int llmMaxTokens;
     private boolean stayInChannel, songInGame, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
     private int maxYTPlaylistPages, mixSongs;
@@ -97,6 +99,11 @@ public class BotConfig
             voiceSttModel = config.getString("voicesttmodel");
             voiceTtsModel = config.getString("voicettsmodel");
             voiceTtsVoice = config.getString("voicettsvoice");
+            llmApi = config.getString("llmapi");
+            llmKey = config.getString("llmkey");
+            llmModel = config.getString("llmmodel");
+            llmPrompt = config.getString("llmprompt");
+            llmMaxTokens = config.getInt("llmmaxtokens");
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
             aliases = config.getConfig("aliases");
@@ -370,6 +377,31 @@ public class BotConfig
     public String getVoiceTtsVoice()
     {
         return voiceTtsVoice;
+    }
+
+    public String getLlmApi()
+    {
+        return llmApi;
+    }
+
+    public String getLlmKey()
+    {
+        return llmKey;
+    }
+
+    public String getLlmModel()
+    {
+        return llmModel;
+    }
+
+    public String getLlmPrompt()
+    {
+        return llmPrompt;
+    }
+
+    public int getLlmMaxTokens()
+    {
+        return llmMaxTokens;
     }
     
     public String getMaxTime()
