@@ -92,17 +92,25 @@ public class VoiceRouter
           "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
     };
     private static final String NOT_SPOKEN = "(Gunnabot has not spoken recently.)";
-    private static final String JUST_SPOKE = "(Gunnabot spoke a few seconds ago.)";
+    private static final String JUST_SPOKE = "(Gunnabot replied to this speaker a few seconds ago.)";
 
+    // HTTP/1.1: plain-http local servers choke on the HTTP/2 upgrade request
     private final HttpClient http = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(3)).build();
-    private final String baseUrl, model;
+    private final String baseUrl, apiKey, model;
+    private final boolean openRouter;
 
-    public VoiceRouter(String baseUrl, String model)
+    /**
+     * @param baseUrl an OpenAI-compatible API root, e.g. https://openrouter.ai/api or http://host:8001
+     * @param apiKey bearer token, or empty for a local server
+     */
+    public VoiceRouter(String baseUrl, String apiKey, String model)
     {
         this.baseUrl = baseUrl.replaceAll("/+$", "");
+        this.apiKey = apiKey == null ? "" : apiKey;
         this.model = model;
+        this.openRouter = this.baseUrl.contains("openrouter.ai");
     }
 
     /**
@@ -127,20 +135,28 @@ public class VoiceRouter
                 .put("messages", messages)
                 .put("max_tokens", 48)
                 .put("temperature", 0);
-        HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + "/v1/chat/completions"))
+        if (openRouter)
+        {
+            // a yes/no plus a command doesn't need thinking, and the fastest
+            // host matters more than the cheapest for a live conversation
+            body.put("reasoning", new JSONObject().put("enabled", false));
+            body.put("provider", new JSONObject().put("sort", "latency"));
+        }
+        HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(baseUrl + "/v1/chat/completions"))
                 .timeout(Duration.ofSeconds(10))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()));
+        if (!apiKey.isEmpty())
+            req.header("Authorization", "Bearer " + apiKey);
         HttpResponse<String> res;
         try
         {
-            res = http.send(req, HttpResponse.BodyHandlers.ofString());
+            res = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
         }
         catch (IOException e)
         {
             // the server may have dropped an idle keep-alive connection; retry once
-            res = http.send(req, HttpResponse.BodyHandlers.ofString());
+            res = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
         }
         if (res.statusCode() != 200)
             throw new IOException("Router failed: HTTP " + res.statusCode());

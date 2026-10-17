@@ -66,8 +66,11 @@ public class VoiceManager
     // how much of the channel conversation the router and LLM see
     private static final int LOG_LINES = 10;
     private static final long LOG_MAX_AGE_MS = 3 * 60_000;
-    // a line this soon after the bot spoke is likely a reply to it
-    private static final long FOLLOW_UP_MS = 20_000;
+    // a line from the person the bot just answered, this soon after, is likely a reply to it
+    private static final long FOLLOW_UP_MS = 15_000;
+    // a line that waited longer than this to be processed is stale; answering
+    // it late is worse than not answering
+    private static final long STALE_MS = 10_000;
 
     private static class Line
     {
@@ -87,6 +90,7 @@ public class VoiceManager
         final LlmClient.Conversation conversation;
         private final Deque<Line> log = new ArrayDeque<>();
         private volatile long lastSpoke;
+        private volatile long lastAnswered; // user id of the last person the bot responded to
 
         Session(MessageChannel channel, ScheduledFuture<?> poller, LlmClient.Conversation conversation)
         {
@@ -110,9 +114,10 @@ public class VoiceManager
             return lines;
         }
 
-        boolean botJustSpoke()
+        /** Whether the bot just answered this person, so their next line is probably a reply. */
+        boolean isFollowUp(User user)
         {
-            return System.currentTimeMillis() - lastSpoke < FOLLOW_UP_MS;
+            return user.getIdLong() == lastAnswered && System.currentTimeMillis() - lastSpoke < FOLLOW_UP_MS;
         }
     }
 
@@ -125,6 +130,9 @@ public class VoiceManager
     private final ScheduledExecutorService ticker = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "voice-ticker"));
     // speech requests are slow-ish network calls; keep them off JDA's threads
     private final ExecutorService workers = Executors.newFixedThreadPool(2, r -> daemon(r, "voice-worker"));
+    // speech has its own thread, so replies never wait behind transcriptions
+    // and clips are synthesised in the order they were asked for
+    private final ExecutorService speech = Executors.newSingleThreadExecutor(r -> daemon(r, "voice-tts"));
     // LLM calls run beside the router, so they get their own threads
     private final ExecutorService llmCalls = Executors.newCachedThreadPool(r -> daemon(r, "voice-llm"));
 
@@ -138,7 +146,10 @@ public class VoiceManager
         this.llm = key == null || key.isBlank() ? null
                 : new LlmClient(config.getLlmApi(), key, config.getLlmModel(), config.getLlmPrompt(), config.getLlmMaxTokens());
         String routerUrl = config.getRouterApi();
-        this.router = routerUrl == null || routerUrl.isBlank() ? null : new VoiceRouter(routerUrl, config.getRouterModel());
+        // the router can share the chat LLM's key (both OpenRouter, say)
+        String routerKey = config.getRouterKey() == null || config.getRouterKey().isBlank() ? key : config.getRouterKey();
+        this.router = routerUrl == null || routerUrl.isBlank() ? null
+                : new VoiceRouter(routerUrl, routerKey, config.getRouterModel());
     }
 
     /** Voice commands run through the same command client as typed ones. */
@@ -172,7 +183,11 @@ public class VoiceManager
     {
         stopListening(guild);
         long guildId = guild.getIdLong();
-        VoiceListener listener = new VoiceListener((user, wav) -> workers.submit(() -> onUtterance(guildId, user, wav)));
+        VoiceListener listener = new VoiceListener((user, wav) ->
+        {
+            long heardAt = System.currentTimeMillis();
+            workers.submit(() -> onUtterance(guildId, user, wav, heardAt));
+        });
         ScheduledFuture<?> poller = ticker.scheduleAtFixedRate(listener::flushIdle, 100, 100, TimeUnit.MILLISECONDS);
         sessions.put(guildId, new Session(channel, poller, llm == null ? null : llm.newConversation()));
         guild.getAudioManager().setReceivingHandler(listener);
@@ -199,7 +214,7 @@ public class VoiceManager
             session.add(BOT_NAME, text);
             session.lastSpoke = System.currentTimeMillis();
         }
-        workers.submit(() ->
+        speech.submit(() ->
         {
             try
             {
@@ -250,12 +265,18 @@ public class VoiceManager
         });
     }
 
-    private void onUtterance(long guildId, User user, byte[] wav)
+    private void onUtterance(long guildId, User user, byte[] wav, long heardAt)
     {
         Session session = sessions.get(guildId);
         Guild guild = bot.getJDA().getGuildById(guildId);
         if (session == null || guild == null)
             return;
+        long waited = System.currentTimeMillis() - heardAt;
+        if (waited > STALE_MS)
+        {
+            LOG.warn("Dropping a line from {} that waited {} ms; the speech server is falling behind", user.getName(), waited);
+            return;
+        }
         String text;
         long start = System.currentTimeMillis();
         try
@@ -275,7 +296,7 @@ public class VoiceManager
         Member member = guild.getMember(user);
         String name = member != null ? member.getEffectiveName() : user.getName();
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
-        boolean followUp = session.botJustSpoke();
+        boolean followUp = session.isFollowUp(user);
         session.add(name, text);
         List<String> recent = session.recent();
         String player = playerState(handler);
@@ -310,6 +331,7 @@ public class VoiceManager
             LOG.info("Heard {} ({} ms audio, STT {} ms, router {} ms), not for the bot: {}", name, audioMs, sttMs, routerMs, text);
             return;
         }
+        session.lastAnswered = user.getIdLong();
         // named but the router saw no command: treat it as talk
         String command = route == null || !route.toBot ? "chat" : route.command;
         String args = route == null ? "" : route.args;
