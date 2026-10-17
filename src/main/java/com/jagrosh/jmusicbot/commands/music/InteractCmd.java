@@ -52,11 +52,12 @@ public class InteractCmd extends MusicCommand
         }
         voice.startListening(event.getGuild(), event.getChannel());
         String prefix = event.getClient().getPrefix();
-        String how = voice.getLlmModel() == null
-                ? "Say *play Fleetwood Mac*, *skip*, *pause*, *resume* or *stop*."
-                : "Just talk: I'll answer out loud, and ask for music however you like (`" + voice.getLlmModel() + "`).";
+        String how = "I only respond when you call me *Gunnabot*, *bot*, *robot* or *clanker*. "
+                + (voice.getLlmModel() == null
+                ? "Try *bot, play Fleetwood Mac*, *bot, skip*, *pause*, *resume* or *stop*."
+                : "Ask me anything, or ask for music however you like, e.g. *robot, put on some Six60* (`" + voice.getLlmModel() + "`).");
         event.replySuccess("🎙️ Listening in " + event.getMember().getVoiceState().getChannel().getAsMention()
                 + ". " + how + " `" + prefix + name + "` again to stop.");
-        voice.speak(event.getGuild(), "Hey, I'm listening.");
+        voice.speak(event.getGuild(), "Gunnabot here. Say my name if you need me.");
     }
 }

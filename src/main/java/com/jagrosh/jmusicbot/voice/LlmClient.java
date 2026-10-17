@@ -44,9 +44,11 @@ public class LlmClient
             + "\"reply\": what to say out loud}. "
             + "Use play when they want something played or queued (query = what to search YouTube for), "
             + "skip to move to the next song, pause and resume to pause or continue, stop to stop the music and "
-            + "clear the queue. Use chat for everything else, including questions about the current song, which is "
+            + "clear the queue. A temporary halt (\"hang on\", \"stop it for a sec\", \"hold the music\") is pause; "
+            + "use stop only when they want the music finished.Use chat for everything else, including questions about the current song, which is "
             + "given in the context line. Only choose a music action when they clearly ask for it; otherwise chat. "
-            + "For music actions keep reply to a few words, like \"Skipping.\"";
+            + "For music actions keep reply to a few words, like \"Skipping.\" "
+            + "People call you Gunnabot, bot, robot or clanker; every message you see was addressed to you.";
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();

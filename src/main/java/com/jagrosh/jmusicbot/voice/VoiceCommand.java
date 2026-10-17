@@ -18,10 +18,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Turns a transcript into a playback action. Speech-to-text output is loose
- * ("Gunna, skip.", "hey gunner play the beatles"), so this strips an optional
- * wake word and punctuation before matching. Anything unrecognised is CHAT,
- * which goes to the LLM (or is repeated back when there isn't one).
+ * Turns a transcript into a playback action, and works out whether the bot
+ * was addressed: it only responds to speech containing one of its names
+ * (Gunnabot, bot, robot, clanker) anywhere in the sentence. Speech-to-text
+ * output is loose ("Gunner bot, skip.", "play the beatles, robot"), so names
+ * and punctuation are stripped before matching. Anything unrecognised is CHAT,
+ * which the LLM answers.
  */
 public final class VoiceCommand
 {
@@ -30,7 +32,7 @@ public final class VoiceCommand
     public final Type type;
     /** The song query for PLAY, the original transcript for CHAT, otherwise empty. */
     public final String arg;
-    /** Whether the speaker started with the wake word ("gunna, ..."). */
+    /** Whether the speaker used one of the bot's names. */
     public final boolean addressed;
 
     private VoiceCommand(Type type, String arg, boolean addressed)
@@ -40,9 +42,9 @@ public final class VoiceCommand
         this.addressed = addressed;
     }
 
-    // "gunna", and the ways STT tends to spell it
+    // the bot's names, and the ways STT tends to spell "gunnabot"
     private static final Pattern WAKE = Pattern.compile(
-            "^(?:(?:hey|hi|ok|okay|yo)\\s+)?(?:gunna|gunner|gonna|guna|gunnar)\\b\\s*");
+            "\\b(?:(?:hey|hi|ok|okay|oi)\\s+)?(?:(?:gunna|gunner|gonna|guna|gunnar)\\s?bot|robot|bot|clankers?)\\b");
     private static final Pattern PUNCTUATION = Pattern.compile("[^\\p{L}\\p{N}'\\s]");
 
     public static VoiceCommand parse(String transcript)
@@ -53,7 +55,7 @@ public final class VoiceCommand
         Matcher wake = WAKE.matcher(t);
         boolean addressed = wake.find();
         if (addressed)
-            t = t.substring(wake.end()).trim();
+            t = wake.replaceAll(" ").replaceAll("\\s+", " ").trim();
         t = t.replaceFirst("^(?:please|can you|could you)\\s+", "").trim();
 
         t = t.replaceFirst("\\s+please$", "").trim();

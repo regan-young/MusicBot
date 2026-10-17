@@ -203,6 +203,14 @@ public class VoiceManager
         Member member = guild.getMember(user);
         String name = member != null ? member.getEffectiveName() : user.getName();
         long sttMs = System.currentTimeMillis() - start;
+        // only respond when called by name, so the bot stays out of conversations
+        VoiceCommand parsed = VoiceCommand.parse(text);
+        if (!parsed.addressed)
+        {
+            LOG.info("Heard {} ({} ms audio, STT {} ms), not addressed: {}", name,
+                    VoiceAudio.durationMs(wav.length - 44), sttMs, text);
+            return;
+        }
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
 
         // The LLM classifies the utterance and writes the reply in one call;
@@ -233,11 +241,10 @@ public class VoiceManager
         }
         else
         {
-            VoiceCommand cmd = VoiceCommand.parse(text);
             LOG.info("Heard {} ({} ms audio, STT {} ms): {} -> {} (keywords)", name,
-                    VoiceAudio.durationMs(wav.length - 44), sttMs, text, cmd.type);
-            action = cmd.type;
-            query = cmd.arg;
+                    VoiceAudio.durationMs(wav.length - 44), sttMs, text, parsed.type);
+            action = parsed.type;
+            query = parsed.arg;
             reply = "";
         }
 

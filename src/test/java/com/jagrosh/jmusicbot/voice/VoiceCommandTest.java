@@ -10,7 +10,7 @@ public class VoiceCommandTest
     @Test
     public void playWithWakeWordAndPunctuation()
     {
-        VoiceCommand c = VoiceCommand.parse("Hey Gunna, play Fleetwood Mac.");
+        VoiceCommand c = VoiceCommand.parse("Hey Gunnabot, play Fleetwood Mac.");
         assertEquals(Type.PLAY, c.type);
         assertEquals("fleetwood mac", c.arg);
     }
@@ -18,8 +18,8 @@ public class VoiceCommandTest
     @Test
     public void wakeWordMisspellings()
     {
-        assertEquals(Type.SKIP, VoiceCommand.parse("Gunner skip!").type);
-        assertEquals(Type.SKIP, VoiceCommand.parse("okay gonna, next song").type);
+        assertEquals(Type.SKIP, VoiceCommand.parse("Gunner bot skip!").type);
+        assertEquals(Type.SKIP, VoiceCommand.parse("next song, robot").type);
     }
 
     @Test
@@ -49,13 +49,27 @@ public class VoiceCommandTest
     }
 
     @Test
-    public void wakeWordMarksAddressed()
+    public void addressedByAnyNameAnywhere()
     {
-        assertTrue(VoiceCommand.parse("Gunna, what's the weather like?").addressed);
-        assertTrue(VoiceCommand.parse("hey gunner skip").addressed);
+        assertTrue(VoiceCommand.parse("Gunnabot, what's the weather like?").addressed);
+        assertTrue(VoiceCommand.parse("gonna bot skip").addressed);
+        assertTrue(VoiceCommand.parse("What do you think, robot?").addressed);
+        assertTrue(VoiceCommand.parse("Hey clanker, play some jazz").addressed);
+        assertTrue(VoiceCommand.parse("Bot. Pause.").addressed);
+        assertEquals(Type.PLAY, VoiceCommand.parse("Hey clanker, play some jazz").type);
+        assertEquals("some jazz", VoiceCommand.parse("Hey clanker, play some jazz").arg);
+        assertEquals(Type.PAUSE, VoiceCommand.parse("Bot. Pause.").type);
+    }
+
+    @Test
+    public void notAddressedWithoutAName()
+    {
         assertFalse(VoiceCommand.parse("what's the weather like?").addressed);
-        // the LLM gets the transcript as spoken, wake word included
-        assertEquals("Gunna, what's the weather like?", VoiceCommand.parse("Gunna, what's the weather like?").arg);
+        assertFalse(VoiceCommand.parse("I'm gonna skip lunch").addressed);
+        assertFalse(VoiceCommand.parse("grab me a bottle").addressed);
+        assertFalse(VoiceCommand.parse("we went to the robotics club").addressed);
+        // the LLM gets the transcript as spoken
+        assertEquals("Gunnabot, what's up?", VoiceCommand.parse("Gunnabot, what's up?").arg);
     }
 
     @Test
