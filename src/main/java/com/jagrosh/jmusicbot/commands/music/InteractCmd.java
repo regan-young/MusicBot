@@ -52,11 +52,11 @@ public class InteractCmd extends MusicCommand
         }
         voice.startListening(event.getGuild(), event.getChannel());
         String prefix = event.getClient().getPrefix();
-        String chat = voice.getLlmModel() == null ? "Anything else I'll repeat back."
-                : "Anything else, I'll answer (`" + voice.getLlmModel() + "`). With others in the channel, start with *Gunna* so I know you're talking to me.";
+        String how = voice.getLlmModel() == null
+                ? "Say *play Fleetwood Mac*, *skip*, *pause*, *resume* or *stop*."
+                : "Just talk: I'll answer out loud, and ask for music however you like (`" + voice.getLlmModel() + "`).";
         event.replySuccess("🎙️ Listening in " + event.getMember().getVoiceState().getChannel().getAsMention()
-                + ". Music: *play Fleetwood Mac*, *skip*, *pause*, *resume*, *stop*, *what's playing*. "
-                + chat + " `" + prefix + name + "` again to stop. Transcripts appear here.");
+                + ". " + how + " `" + prefix + name + "` again to stop.");
         voice.speak(event.getGuild(), "Hey, I'm listening.");
     }
 }

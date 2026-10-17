@@ -25,6 +25,7 @@ import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -33,7 +34,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.entities.Guild;
-import net.dv8tion.jda.api.entities.GuildVoiceState;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
@@ -42,12 +42,12 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Voice features: ?say (text-to-speech) and ?interact, which listens to the
- * voice channel, transcribes each utterance, posts it, and either runs it as
- * a playback command or passes it to the LLM and speaks the reply. Speech
+ * voice channel, transcribes each utterance, and runs it as a playback
+ * command or answers it out loud. Speech
  * runs on an external OpenAI-compatible server (see {@link VoiceApi}) and the
- * LLM on OpenRouter (see {@link LlmClient}). With several people in the
- * channel the bot only answers when addressed ("gunna, ...") so it doesn't
- * reply to every bit of chatter.
+ * LLM on OpenRouter (see {@link LlmClient}), which decides whether each
+ * utterance is a playback command or just talk and writes the spoken reply.
+ * Transcripts and replies are logged rather than posted.
  */
 public class VoiceManager
 {
@@ -202,16 +202,50 @@ public class VoiceManager
 
         Member member = guild.getMember(user);
         String name = member != null ? member.getEffectiveName() : user.getName();
-        session.channel.sendMessage(FormatUtil.filter("🎙️ **" + name + ":** " + text)).queue(); // 🎙️
-
+        long sttMs = System.currentTimeMillis() - start;
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
-        VoiceCommand cmd = VoiceCommand.parse(text);
-        LOG.info("Heard {} ({} ms audio, STT {} ms) -> {}: {}", name, VoiceAudio.durationMs(wav.length - 44),
-                System.currentTimeMillis() - start, cmd.type, text);
-        switch (cmd.type)
+
+        // The LLM classifies the utterance and writes the reply in one call;
+        // keyword matching is the fallback when there's no LLM or it fails.
+        VoiceCommand.Type action;
+        String query, reply;
+        LlmClient.Decision d = null;
+        if (session.conversation != null)
+        {
+            long llmStart = System.currentTimeMillis();
+            try
+            {
+                d = session.conversation.decide(name, text, playerContext(handler));
+                LOG.info("Heard {} ({} ms audio, STT {} ms, LLM {} ms): {} -> {} [{}] {}", name,
+                        VoiceAudio.durationMs(wav.length - 44), sttMs, System.currentTimeMillis() - llmStart,
+                        text, d.action, d.query, d.reply);
+            }
+            catch (Exception e)
+            {
+                LOG.warn("LLM request failed, falling back to keywords", e);
+            }
+        }
+        if (d != null)
+        {
+            action = d.action;
+            query = d.query;
+            reply = LlmClient.forSpeech(d.reply);
+        }
+        else
+        {
+            VoiceCommand cmd = VoiceCommand.parse(text);
+            LOG.info("Heard {} ({} ms audio, STT {} ms): {} -> {} (keywords)", name,
+                    VoiceAudio.durationMs(wav.length - 44), sttMs, text, cmd.type);
+            action = cmd.type;
+            query = cmd.arg;
+            reply = "";
+        }
+
+        switch (action)
         {
             case PLAY:
-                play(guild, handler, user, cmd.arg, session.channel);
+                // the confirmation names the actual track once it has loaded
+                play(guild, handler, user, query, session.channel);
                 break;
             case SKIP:
                 if (handler.getPlayer().getPlayingTrack() == null)
@@ -219,66 +253,62 @@ public class VoiceManager
                 else
                 {
                     handler.getPlayer().stopTrack();
-                    speak(guild, "Skipped.");
+                    speak(guild, orElse(reply, "Skipped."));
                 }
                 break;
             case PAUSE:
                 handler.getPlayer().setPaused(true);
-                speak(guild, "Paused.");
+                speak(guild, orElse(reply, "Paused."));
                 break;
             case RESUME:
                 handler.getPlayer().setPaused(false);
-                speak(guild, "Resuming.");
+                speak(guild, orElse(reply, "Resuming."));
                 break;
             case STOP:
                 handler.stopAndClear();
-                speak(guild, "Stopped, and cleared the queue.");
+                speak(guild, orElse(reply, "Stopped, and cleared the queue."));
                 break;
             case NOW_PLAYING:
                 AudioTrack t = handler.getPlayer().getPlayingTrack();
                 speak(guild, t == null ? "Nothing's playing." : "This is " + t.getInfo().title + ".");
                 break;
             default:
-                chat(guild, session, name, cmd);
+                // chat; without an LLM there's nothing to say
+                speak(guild, reply);
         }
     }
 
-    private void chat(Guild guild, Session session, String name, VoiceCommand cmd)
+    /** One line describing the player for the LLM, so it can answer "what's this song?". */
+    private String playerContext(AudioHandler handler)
     {
-        if (session.conversation == null)
+        AudioTrack t = handler.getPlayer().getPlayingTrack();
+        StringBuilder sb = new StringBuilder();
+        if (t == null)
+            sb.append("Nothing is playing.");
+        else
         {
-            speak(guild, "You said: " + cmd.arg);
-            return;
+            String label = bot.getRadioMetadata().getLabel(t);
+            sb.append(handler.getPlayer().isPaused() ? "Paused: " : "Now playing: ")
+              .append(label != null ? label : t.getInfo().title);
+            if (t.getInfo().author != null && !t.getInfo().author.isEmpty())
+                sb.append(" (").append(t.getInfo().author).append(")");
         }
-        // in a group, only answer when spoken to
-        if (!cmd.addressed && humansInChannel(guild) > 1)
+        List<QueuedTrack> queue = handler.getQueue().getList();
+        if (!queue.isEmpty())
         {
-            LOG.info("Not addressed in a group, not answering");
-            return;
+            sb.append(" Up next: ");
+            for (int i = 0; i < Math.min(3, queue.size()); i++)
+                sb.append(i == 0 ? "" : "; ").append(queue.get(i).getTrack().getInfo().title);
+            if (queue.size() > 3)
+                sb.append(" and ").append(queue.size() - 3).append(" more");
+            sb.append('.');
         }
-        try
-        {
-            long start = System.currentTimeMillis();
-            String reply = session.conversation.reply(name, cmd.arg);
-            LOG.info("LLM replied in {} ms: {}", System.currentTimeMillis() - start, reply);
-            if (reply.isEmpty())
-                return;
-            session.channel.sendMessage(FormatUtil.filter("\uD83E\uDD16 **" + guild.getSelfMember().getEffectiveName() + ":** " + reply)).queue(); // 🤖
-            speak(guild, LlmClient.forSpeech(reply));
-        }
-        catch (Exception e)
-        {
-            LOG.warn("LLM request failed", e);
-            speak(guild, "Sorry, my brain isn't responding right now.");
-        }
+        return sb.toString();
     }
 
-    private static long humansInChannel(Guild guild)
+    private static String orElse(String s, String fallback)
     {
-        GuildVoiceState vs = guild.getSelfMember().getVoiceState();
-        if (vs == null || vs.getChannel() == null)
-            return 0;
-        return vs.getChannel().getMembers().stream().filter(m -> !m.getUser().isBot()).count();
+        return s == null || s.isBlank() ? fallback : s;
     }
 
     private void play(Guild guild, AudioHandler handler, User user, String query, MessageChannel channel)

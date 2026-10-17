@@ -58,7 +58,7 @@ public class VoiceApi
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
-        HttpResponse<byte[]> res = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
+        HttpResponse<byte[]> res = send(req, HttpResponse.BodyHandlers.ofByteArray());
         if (res.statusCode() != 200 || res.body().length == 0)
             throw new IOException("TTS failed: HTTP " + res.statusCode());
         return res.body();
@@ -81,9 +81,24 @@ public class VoiceApi
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray()))
                 .build();
-        HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> res = send(req, HttpResponse.BodyHandlers.ofString());
         if (res.statusCode() != 200)
             throw new IOException("STT failed: HTTP " + res.statusCode());
         return new JSONObject(res.body()).optString("text", "").trim();
+    }
+
+    // uvicorn closes idle keep-alive connections, and a request sent on one as
+    // it closes fails with "header parser received no bytes"; one retry on a
+    // fresh connection fixes it
+    private <T> HttpResponse<T> send(HttpRequest req, HttpResponse.BodyHandler<T> handler) throws IOException, InterruptedException
+    {
+        try
+        {
+            return http.send(req, handler);
+        }
+        catch (IOException e)
+        {
+            return http.send(req, handler);
+        }
     }
 }
