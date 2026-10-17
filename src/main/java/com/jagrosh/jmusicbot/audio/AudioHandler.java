@@ -19,6 +19,7 @@ import com.jagrosh.jmusicbot.playlist.PlaylistLoader.Playlist;
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
+import com.jagrosh.jmusicbot.voice.VoiceSpeaker;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.event.AudioEventAdapter;
@@ -59,15 +60,17 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     
     private final PlayerManager manager;
     private final AudioPlayer audioPlayer;
+    private final VoiceSpeaker speaker;
     private final long guildId;
     
     private AudioFrame lastFrame;
     private AbstractQueue<QueuedTrack> queue;
 
-    protected AudioHandler(PlayerManager manager, Guild guild, AudioPlayer player)
+    protected AudioHandler(PlayerManager manager, Guild guild, AudioPlayer player, AudioPlayer voicePlayer)
     {
         this.manager = manager;
         this.audioPlayer = player;
+        this.speaker = new VoiceSpeaker(voicePlayer);
         this.guildId = guild.getIdLong();
 
         this.setQueueType(manager.getBot().getSettingsManager().getSettings(guildId).getQueueType());
@@ -145,6 +148,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         return audioPlayer;
     }
+
+    public VoiceSpeaker getSpeaker()
+    {
+        return speaker;
+    }
     
     public RequestMetadata getRequestMetadata()
     {
@@ -202,7 +210,8 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             if(!playFromDefault())
             {
                 manager.getBot().getNowplayingHandler().onTrackUpdate(manager.getBot().getJDA().getGuildById(guildId), null);
-                if(!manager.getBot().getConfig().getStay())
+                // stay connected while ?interact is listening
+                if(!manager.getBot().getConfig().getStay() && !manager.getBot().getVoiceManager().isListening(guildId))
                     manager.getBot().closeAudioConnection(guildId);
                 // unpause, in the case when the player was paused and the track has been skipped.
                 // this is to prevent the player being paused next time it's being used.
@@ -325,7 +334,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     @Override
     public boolean canProvide() 
     {
-        lastFrame = audioPlayer.provide();
+        // Speech goes out instead of music while it plays. Music isn't pulled
+        // meanwhile, so it pauses and picks up where it left off.
+        lastFrame = speaker.getPlayer().provide();
+        if (lastFrame == null)
+            lastFrame = audioPlayer.provide();
         return lastFrame != null;
     }
 

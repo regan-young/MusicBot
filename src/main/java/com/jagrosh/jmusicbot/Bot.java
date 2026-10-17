@@ -27,6 +27,7 @@ import com.jagrosh.jmusicbot.audio.PlayerManager;
 import com.jagrosh.jmusicbot.gui.GUI;
 import com.jagrosh.jmusicbot.playlist.PlaylistLoader;
 import com.jagrosh.jmusicbot.settings.SettingsManager;
+import com.jagrosh.jmusicbot.voice.VoiceManager;
 import java.util.Objects;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Activity;
@@ -48,6 +49,7 @@ public class Bot
     private final RadioMetadata radioMetadata;
     private final AloneInVoiceHandler aloneInVoiceHandler;
     private final PlayerControls playerControls;
+    private final VoiceManager voiceManager;
     
     private boolean shuttingDown = false;
     private JDA jda;
@@ -68,6 +70,7 @@ public class Bot
         this.aloneInVoiceHandler = new AloneInVoiceHandler(this);
         this.aloneInVoiceHandler.init();
         this.playerControls = new PlayerControls(this);
+        this.voiceManager = new VoiceManager(this, config);
     }
     
     public BotConfig getConfig()
@@ -115,6 +118,11 @@ public class Bot
         return playerControls;
     }
 
+    public VoiceManager getVoiceManager()
+    {
+        return voiceManager;
+    }
+
     public AloneInVoiceHandler getAloneInVoiceHandler()
     {
         return aloneInVoiceHandler;
@@ -129,7 +137,10 @@ public class Bot
     {
         Guild guild = jda.getGuildById(guildId);
         if(guild!=null)
+        {
+            voiceManager.stopListening(guild);
             threadpool.submit(() -> guild.getAudioManager().closeAudioConnection());
+        }
     }
     
     public void resetGame()

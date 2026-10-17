@@ -41,7 +41,7 @@ public class BotConfig
     private Path path = null;
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
-            evalEngine, ytdlpPath;
+            evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice;
     private boolean stayInChannel, songInGame, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
     private int maxYTPlaylistPages, mixSongs;
@@ -93,6 +93,10 @@ public class BotConfig
             maxYTPlaylistPages = config.getInt("maxytplaylistpages");
             mixSongs = config.getInt("mixsongs");
             ytdlpPath = config.getString("ytdlppath");
+            voiceApi = config.getString("voiceapi");
+            voiceSttModel = config.getString("voicesttmodel");
+            voiceTtsModel = config.getString("voicettsmodel");
+            voiceTtsVoice = config.getString("voicettsvoice");
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
             aliases = config.getConfig("aliases");
@@ -346,6 +350,26 @@ public class BotConfig
     public String getYtdlpPath()
     {
         return ytdlpPath;
+    }
+
+    public String getVoiceApi()
+    {
+        return voiceApi;
+    }
+
+    public String getVoiceSttModel()
+    {
+        return voiceSttModel;
+    }
+
+    public String getVoiceTtsModel()
+    {
+        return voiceTtsModel;
+    }
+
+    public String getVoiceTtsVoice()
+    {
+        return voiceTtsVoice;
     }
     
     public String getMaxTime()

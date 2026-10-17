@@ -190,6 +190,7 @@ public class JMusicBot {
                         new PingCommand(),
                         new SettingsCmd(bot),
 
+                        new InteractCmd(bot),
                         new LyricsCmd(bot),
                         new MixCmd(bot),
                         new NowplayingCmd(bot),
@@ -198,6 +199,7 @@ public class JMusicBot {
                         new PlaylistsCmd(bot),
                         new QueueCmd(bot),
                         new RemoveCmd(bot),
+                        new SayCmd(bot),
                         new SearchCmd(bot),
                         new SCSearchCmd(bot),
                         new SeekCmd(bot),
