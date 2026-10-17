@@ -79,6 +79,16 @@ public class VoiceFeaturesTest
     }
 
     @Test
+    public void routesExplicitModeCommands()
+    {
+        assertEquals("explicit_on", VoiceRouter.parse("{\"to_bot\": true, \"command\": \"explicit_on\", \"args\": \"\"}").command);
+        assertEquals("explicit_off", VoiceRouter.parse("{\"to_bot\": true, \"command\": \"explicit_off\", \"args\": \"\"}").command);
+        // only in 18+ channels does the prompt describe them
+        assertFalse(VoiceRouter.SYSTEM.contains("explicit_on"));
+        assertTrue(VoiceRouter.MOOD.contains("explicit_on"));
+    }
+
+    @Test
     public void parsesRemindersAndMemory()
     {
         LlmClient.Decision d = LlmClient.parseDecision("{\"action\":\"remind\",\"query\":\"\",\"task\":\"start the game\","

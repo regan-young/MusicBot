@@ -78,6 +78,8 @@ public class VoiceManager
     private static final long STALE_MS = 10_000;
     // after just the bot's name, how long to wait for the rest before saying "Yes?"
     private static final long NAME_WAIT_MS = 1500;
+    // explicit mode turns itself off after this long unused
+    private static final long EXPLICIT_IDLE_MS = 60 * 60_000;
     // research answers wait for a lull: nobody talking for this long...
     private static final long LULL_MS = 1200;
     // ...but no longer than this
@@ -123,12 +125,49 @@ public class VoiceManager
     private record Answer(long time, String speaker, String line, String command, String args, boolean named,
             boolean followUp, List<String> conversation) {}
 
+    /**
+     * Explicit mode, in an age-restricted channel only. It goes on by command
+     * (?explicit on, or asking out loud) and off by command, when the router
+     * hears someone wanting it toned down or the talk turning serious, when
+     * ?chat ends, or after EXPLICIT_IDLE_MS unused.
+     */
+    private static class Mood
+    {
+        private volatile long usedAt; // 0: off
+
+        boolean spicy()
+        {
+            if (usedAt != 0 && System.currentTimeMillis() - usedAt > EXPLICIT_IDLE_MS)
+                usedAt = 0;
+            return usedAt != 0;
+        }
+
+        void on()
+        {
+            usedAt = System.currentTimeMillis();
+        }
+
+        void touch()
+        {
+            if (usedAt != 0)
+                usedAt = System.currentTimeMillis();
+        }
+
+        void reset()
+        {
+            usedAt = 0;
+        }
+    }
+
     private static class Session
     {
         final MessageChannel channel;
         final VoiceListener listener;
         final ScheduledFuture<?> poller;
         final LlmClient.Conversation conversation;
+        // the explicit side, in an 18+ channel only; null elsewhere
+        final LlmClient.Conversation adultConversation;
+        final Mood mood = new Mood();
         private final Deque<Line> log = new ArrayDeque<>();
         // each speaker's lines are handled one after another, in order
         final Map<Long, CompletableFuture<Void>> lines = new ConcurrentHashMap<>();
@@ -143,8 +182,10 @@ public class VoiceManager
         // things the bot said it would look into and hasn't answered yet
         final Set<CompletableFuture<Researcher.Result>> research = ConcurrentHashMap.newKeySet();
 
-        Session(MessageChannel channel, VoiceListener listener, ScheduledFuture<?> poller, LlmClient.Conversation conversation)
+        Session(MessageChannel channel, VoiceListener listener, ScheduledFuture<?> poller, LlmClient.Conversation conversation,
+                LlmClient.Conversation adultConversation)
         {
+            this.adultConversation = adultConversation;
             this.channel = channel;
             this.listener = listener;
             this.poller = poller;
@@ -214,6 +255,8 @@ public class VoiceManager
     private final ZoneId zone;
     // conversations with the bot by text (@mentions), per channel
     private final Map<Long, LlmClient.Conversation> textConversations = new ConcurrentHashMap<>();
+    private final Map<Long, LlmClient.Conversation> textAdultConversations = new ConcurrentHashMap<>();
+    private final Map<Long, Mood> textMoods = new ConcurrentHashMap<>();
     private volatile CommandClient client;
     private final Map<Long, Session> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService ticker = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "voice-ticker"));
@@ -335,10 +378,11 @@ public class VoiceManager
         }, user -> onTalking(guildId, user), smartTurn, turnChecks);
         ScheduledFuture<?> poller = ticker.scheduleAtFixedRate(listener::flushIdle, 100, 100, TimeUnit.MILLISECONDS);
         var voice = guild.getSelfMember().getVoiceState();
-        LlmClient brain = brainFor(voice == null ? null : voice.getChannel());
-        if (brain != null && brain == nsfwLlm)
-            LOG.info("?chat in an 18+ channel: using {} and the 18+ persona", brain.getModel());
-        sessions.put(guildId, new Session(channel, listener, poller, brain == null ? null : brain.newConversation()));
+        boolean adult = llm != null && nsfwLlm != null && isAgeRestricted(voice == null ? null : voice.getChannel());
+        if (adult)
+            LOG.info("?chat in an 18+ channel: the router can switch to {} and the 18+ persona", nsfwLlm.getModel());
+        sessions.put(guildId, new Session(channel, listener, poller, llm == null ? null : llm.newConversation(),
+                adult ? nsfwLlm.newConversation() : null));
         guild.getAudioManager().setReceivingHandler(listener);
     }
 
@@ -687,11 +731,33 @@ public class VoiceManager
         Guild guild = message.getGuild();
         MessageChannel channel = message.getChannel();
         String name = member.getEffectiveName();
-        LlmClient.Conversation conversation = textConversations.computeIfAbsent(channel.getIdLong(),
-                id -> brainFor(channel).newConversation());
+        String player = playerState(bot.getPlayerManager().setUpHandler(guild));
+        LlmClient.Conversation conversation = textConversations.computeIfAbsent(channel.getIdLong(), id -> llm.newConversation());
+        if (nsfwLlm != null && router != null && isAgeRestricted(channel))
+        {
+            Mood mood = textMoods.computeIfAbsent(channel.getIdLong(), id -> new Mood());
+            // as by voice, the router hears "explicit mode on/off" and "tone it down"
+            try
+            {
+                VoiceRouter.Route route = router.route(List.of(name + ": " + text), false, player, mood.spicy());
+                if (route.command.equals("explicit_on") || route.command.equals("explicit_off"))
+                {
+                    textReply(message, setExplicit(guild, channel, route.command.equals("explicit_on")));
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                LOG.warn("Router request failed for a text message", e);
+            }
+            if (mood.spicy())
+            {
+                mood.touch();
+                conversation = textAdultConversations.computeIfAbsent(channel.getIdLong(), id -> nsfwLlm.newConversation());
+            }
+        }
         List<Long> people = new ArrayList<>(List.of(member.getIdLong()));
         message.getMentions().getMembers().forEach(m -> people.add(m.getIdLong()));
-        String player = playerState(bot.getPlayerManager().setUpHandler(guild));
         String context = TEXT_MODE + " " + timeContext() + " Player: " + player + " " + memoryContext(people);
         channel.sendTyping().queue();
         long start = System.currentTimeMillis();
@@ -770,18 +836,52 @@ public class VoiceManager
     }
 
     /**
-     * The 18+ brain for a channel Discord marks age-restricted (a voice
-     * channel, its built-in text chat, or a text channel), otherwise the normal one.
+     * Turns explicit mode on or off for ?chat in this guild (if it's in an
+     * 18+ voice channel) and for text in this channel (if it's 18+).
+     * Returns what to tell them.
      */
-    private LlmClient brainFor(Object channel)
+    public String setExplicit(Guild guild, MessageChannel channel, boolean on)
     {
-        if (nsfwLlm != null && channel instanceof net.dv8tion.jda.api.entities.channel.attribute.IAgeRestrictedChannel c && c.isNSFW())
+        if (nsfwLlm == null)
+            return "Explicit mode isn't set up: there's no nsfwllmmodel in the config.";
+        Session session = sessions.get(guild.getIdLong());
+        boolean voice = session != null && session.adultConversation != null;
+        boolean text = isAgeRestricted(channel);
+        if (!voice && !text)
+            return "Explicit mode only works in channels marked age-restricted in Discord.";
+        if (on && !nsfwLlm.isReachable())
+            return "My explicit side isn't answering. Is the PC on, with LM Studio's server running?";
+        if (voice)
         {
-            if (nsfwLlm.isReachable())
-                return nsfwLlm;
-            LOG.warn("The 18+ model at {} isn't answering (PC off?); using the normal one", nsfwLlm.getModel());
+            if (on)
+                session.mood.on();
+            else
+                session.mood.reset();
         }
-        return llm;
+        if (text)
+        {
+            Mood mood = textMoods.computeIfAbsent(channel.getIdLong(), id -> new Mood());
+            if (on)
+                mood.on();
+            else
+                mood.reset();
+        }
+        LOG.info("Explicit mode {} ({}{})", on ? "on" : "off", voice ? "?chat" : "", text ? " #" + channel.getName() : "");
+        return on ? "Explicit mode on. Don't say I didn't warn you." : "Explicit mode off. Back to my best behaviour.";
+    }
+
+    /** Whether explicit mode is on for ?chat in this guild or for text in this channel. */
+    public boolean isExplicit(Guild guild, MessageChannel channel)
+    {
+        Session session = sessions.get(guild.getIdLong());
+        Mood mood = textMoods.get(channel.getIdLong());
+        return (session != null && session.adultConversation != null && session.mood.spicy()) || (mood != null && mood.spicy());
+    }
+
+    /** Whether Discord marks the channel age-restricted: a voice channel, its built-in text chat, or a text channel. */
+    private static boolean isAgeRestricted(Object channel)
+    {
+        return channel instanceof net.dv8tion.jda.api.entities.channel.attribute.IAgeRestrictedChannel c && c.isNSFW();
     }
 
     /** Replies to a message, with no pings. */
@@ -921,7 +1021,7 @@ public class VoiceManager
             long t = System.currentTimeMillis();
             try
             {
-                route = router.route(recent, followUp, player);
+                route = router.route(recent, followUp, player, session.adultConversation == null ? null : session.mood.spicy());
             }
             catch (Exception e)
             {
@@ -929,7 +1029,6 @@ public class VoiceManager
             }
             routerMs = System.currentTimeMillis() - t;
         }
-
         boolean toBot = named || (route != null && route.toBot);
         // named but the router saw no command: treat it as talk
         String command = !toBot ? "none" : route == null || !route.toBot ? "chat" : route.command;
@@ -1001,6 +1100,8 @@ public class VoiceManager
             if (e != null)
             {
                 LOG.warn("LLM request failed", e);
+                if (session.mood.spicy())
+                    session.mood.reset(); // the local model is down; the normal one answers next time
                 if (!streamed)
                     speak(guild, "Sorry, my brain isn't responding right now.");
                 return;
@@ -1161,7 +1262,11 @@ public class VoiceManager
     private CompletableFuture<LlmClient.Decision> askLlm(Session session, String name, String text, String player, List<String> recent,
             Consumer<String> onSentence)
     {
-        if (session.conversation == null)
+        boolean explicit = session.adultConversation != null && session.mood.spicy();
+        if (explicit)
+            session.mood.touch();
+        LlmClient.Conversation conversation = explicit ? session.adultConversation : session.conversation;
+        if (conversation == null)
             return null;
         // the last line is the one being answered; the rest is context
         List<String> before = recent.subList(0, Math.max(0, recent.size() - 1));
@@ -1169,7 +1274,7 @@ public class VoiceManager
         String context = timeContext() + " Player: " + player
                 + (guild == null ? "" : " " + memoryContext(peopleInVoice(guild)))
                 + (before.isEmpty() ? "" : " Recent conversation in the channel:\n" + String.join("\n", before));
-        return session.conversation.decide(name, text, context, onSentence);
+        return conversation.decide(name, text, context, onSentence);
     }
 
     /** Acts on what the chat LLM (or the keyword fallback) decided. */
@@ -1238,6 +1343,10 @@ public class VoiceManager
                 return;
             case "hush":
                 hush(guild);
+                return;
+            case "explicit_on":
+            case "explicit_off":
+                confirm.accept(setExplicit(guild, channel, command.equals("explicit_on")));
                 return;
             case "leave":
                 confirm.accept("Okay, I'm off. Catch you later.");

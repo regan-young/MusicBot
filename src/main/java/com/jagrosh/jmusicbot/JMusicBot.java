@@ -217,6 +217,7 @@ public class JMusicBot {
                         new SkiptoCmd(bot),
                         new StopCmd(bot),
                         new LeaveCmd(bot),
+                        new ExplicitCmd(bot),
                         new VolumeCmd(bot),
 
                         new PrefixCmd(bot),

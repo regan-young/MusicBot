@@ -50,9 +50,18 @@ public class VoiceRouter
         }
     }
 
+    /** Added to the prompt in age-restricted channels, where the bot has an explicit mode. */
+    static final String MOOD = "\n\nThis channel is 18+, and the bot has an explicit mode that people switch on and "
+            + "off like a setting; the Explicit line says whether it's on. Two more commands here:\n"
+            + "- explicit_on: they ask for the mode itself to be switched on (\"turn explicit mode on\", \"go NSFW\"). "
+            + "Asking for dirty talk or flirting is chat, not this\n"
+            + "- explicit_off: while it's on, they want it off: explicit mode off, back to normal, or the bot to tone "
+            + "it down, clean it up or stop being dirty (while explicit mode is on, \"tone it down\" means this, "
+            + "not the volume)";
+
     /** Commands the router may pick. "chat" goes to the conversational LLM, "none" is ignored. */
     static final Set<String> COMMANDS = Set.of("play", "radio", "mix", "skip", "pause", "resume", "stop",
-            "volume", "shuffle", "hush", "not_you", "leave", "chat", "none");
+            "volume", "shuffle", "hush", "not_you", "leave", "explicit_on", "explicit_off", "chat", "none");
 
     static final String SYSTEM = "You route voice chat for Gunnabot, a music bot in a Discord voice channel with "
             + "several friends. Speech recognition is imperfect: the bot's name may come out as Gunnabot, Gunnerbot, "
@@ -130,7 +139,17 @@ public class VoiceRouter
      */
     public Route route(List<String> conversation, boolean botJustSpoke, String player) throws IOException, InterruptedException
     {
-        JSONArray messages = new JSONArray().put(message("system", SYSTEM));
+        return route(conversation, botJustSpoke, player, null);
+    }
+
+    /**
+     * @param explicit in an 18+ channel, whether explicit mode is on, so the
+     *                 router can judge the mood and switch it; null elsewhere
+     */
+    public Route route(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit)
+            throws IOException, InterruptedException
+    {
+        JSONArray messages = new JSONArray().put(message("system", explicit != null ? SYSTEM + MOOD : SYSTEM));
         for (String[] ex : EXAMPLES)
         {
             messages.put(message("user", "Recent conversation:\n" + ex[0] + "\n" + NOT_SPOKEN + "\nPlayer: Volume 100."));
@@ -139,11 +158,12 @@ public class VoiceRouter
         // the player state goes after the conversation, apart from it: inside
         // it, small models read follow-ups as questions about the song
         messages.put(message("user", "Recent conversation:\n" + String.join("\n", conversation) + "\n"
-                + (botJustSpoke ? JUST_SPOKE : NOT_SPOKEN) + "\nPlayer: " + player));
+                + (botJustSpoke ? JUST_SPOKE : NOT_SPOKEN) + "\nPlayer: " + player
+                + (explicit == null ? "" : "\nExplicit: " + (explicit ? "on" : "off"))));
         JSONObject body = new JSONObject()
                 .put("model", model)
                 .put("messages", messages)
-                .put("max_tokens", 48)
+                .put("max_tokens", 64)
                 .put("temperature", 0);
         if (openRouter)
         {

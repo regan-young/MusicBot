@@ -62,6 +62,9 @@ public class ChatCmd extends MusicCommand
                     + (voice.getLlmModel() == null
                     ? "Try *bot, play Fleetwood Mac*, *bot, skip*, *pause*, *resume* or *stop*."
                     : "Ask me anything, or ask for music however you like, e.g. *robot, put on some Six60*.");
+        if (event.getMember().getVoiceState().getChannel() instanceof net.dv8tion.jda.api.entities.channel.attribute.IAgeRestrictedChannel c
+                && c.isNSFW())
+            how += " This channel is 18+: `" + prefix + "explicit on` (or just ask me) turns my explicit side on.";
         event.replySuccess("🎙️ Listening in " + event.getMember().getVoiceState().getChannel().getAsMention()
                 + ". " + how + " `" + prefix + name + "` again to stop listening; I'll stay in the channel until you tell me "
                 + "to leave (or `" + prefix + "leave`).");
