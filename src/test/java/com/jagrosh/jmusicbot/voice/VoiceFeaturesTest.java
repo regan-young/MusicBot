@@ -79,6 +79,29 @@ public class VoiceFeaturesTest
     }
 
     @Test
+    public void reactionsAreNotForTheBot()
+    {
+        // misrouted as stop, hush or chat on 2026-10-17
+        for (String s : List.of("Holy shit.", "Oh my god.", "Yeah.", "Ooh.", "Um", "Yeah yeah yeah.", "Oh wow.", "Ha ha ha."))
+            assertTrue(s, VoiceManager.isReaction(s));
+        for (String s : List.of("Stop the music", "Oh thank god the interrupt's working now.", "yeah play some Six60", "SHUT UP"))
+            assertFalse(s, VoiceManager.isReaction(s));
+    }
+
+    @Test
+    public void stripsDeepSeekToolMarkup()
+    {
+        // from the 2026-10-17 logs, where it was read out loud
+        String leaked = "<｜DSML｜toolcalls <｜DSML｜invoke name=\"postmessage\" <｜DSML｜parameter "
+                + "name=\"message\" string=\"true\"gunna, here's what I found. It's the Bing Chilling meme. "
+                + "Know Your Meme: https://knowyourmeme.com/memes/bing-chilling </｜DSML｜invoke </｜DSML｜toolcalls";
+        assertTrue(Researcher.DSML.matcher(leaked).find());
+        assertEquals("gunna, here's what I found. It's the Bing Chilling meme. Know Your Meme: "
+                + "https://knowyourmeme.com/memes/bing-chilling", Researcher.stripToolMarkup(leaked));
+        assertFalse(Researcher.DSML.matcher("A normal answer.").find());
+    }
+
+    @Test
     public void routesExplicitModeCommands()
     {
         assertEquals("explicit_on", VoiceRouter.parse("{\"to_bot\": true, \"command\": \"explicit_on\", \"args\": \"\"}").command);

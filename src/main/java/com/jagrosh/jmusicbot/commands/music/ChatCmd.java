@@ -50,7 +50,8 @@ public class ChatCmd extends MusicCommand
             voice.speak(event.getGuild(), "Okay, I've stopped listening.");
             return;
         }
-        voice.startListening(event.getGuild(), event.getChannel());
+        // the bot is still joining, so its own voice state may not be set yet
+        voice.startListening(event.getGuild(), event.getChannel(), event.getMember().getVoiceState().getChannel());
         String prefix = event.getClient().getPrefix();
         String how;
         if (voice.hasRouter())

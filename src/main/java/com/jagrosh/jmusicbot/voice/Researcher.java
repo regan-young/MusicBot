@@ -63,7 +63,16 @@ public class Researcher
     private static final int MAX_STEPS = 4;
     private static final int POST_LIMIT = 1900; // Discord's limit is 2000
     // "I've posted the details", "dropped a link in the chat"...
-    static final Pattern CLAIMS_POST = Pattern.compile("(?i)\\b(posted|dropped|popped|put|shared|sent)\\b[^.]*\\b(chat|channel)\\b");
+    // DeepSeek sometimes writes a tool call in its own markup instead of making it, e.g.
+    // <｜DSML｜toolcalls <｜DSML｜invoke name="postmessage" <｜DSML｜parameter name="message" string="true">...
+    static final Pattern DSML = Pattern.compile("</?\\s*｜DSML｜[^\\s\"<>]*(\\s+\\w+=\"[^\"]*\")*\\s*>?");
+
+    static String stripToolMarkup(String text)
+    {
+        return DSML.matcher(text).replaceAll(" ").replaceAll("[ \\t]+", " ").trim();
+    }
+
+    static final Pattern CLAIMS_POST =Pattern.compile("(?i)\\b(posted|dropped|popped|put|shared|sent)\\b[^.]*\\b(chat|channel)\\b");
 
     static final String INSTRUCTIONS = "\n\nEarlier in the voice chat, %s asked you something and you said you'd "
             + "look into it. Work on it now. Search the web when it needs current or factual information (one or "
@@ -198,6 +207,17 @@ public class Researcher
             if (calls == null || calls.isEmpty())
             {
                 String content = message.optString("content", "").trim();
+                if (DSML.matcher(content).find())
+                {
+                    // it wrote a tool call as text instead of making it: what it meant to post
+                    // is the answer, so post it (links and all) and say it without the markup
+                    content = stripToolMarkup(content);
+                    if (posts == 0 && !content.isEmpty())
+                    {
+                        post.apply(content);
+                        posts++;
+                    }
+                }
                 if (!spoken)
                     return new Result(content, new ArrayList<>(sources), searches, posts, cost);
                 String say = LlmClient.forSpeech(content.replaceAll("https?://\\S+", ""));

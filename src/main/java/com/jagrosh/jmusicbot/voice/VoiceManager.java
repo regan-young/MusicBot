@@ -353,7 +353,8 @@ public class VoiceManager
         return sessions.containsKey(guildId);
     }
 
-    public void startListening(Guild guild, MessageChannel channel)
+    /** @param voiceChannel the channel ?chat listens in (the 18+ check looks at it) */
+    public void startListening(Guild guild, MessageChannel channel, Object voiceChannel)
     {
         stopListening(guild);
         long guildId = guild.getIdLong();
@@ -377,8 +378,7 @@ public class VoiceManager
                     }, workers));
         }, user -> onTalking(guildId, user), smartTurn, turnChecks);
         ScheduledFuture<?> poller = ticker.scheduleAtFixedRate(listener::flushIdle, 100, 100, TimeUnit.MILLISECONDS);
-        var voice = guild.getSelfMember().getVoiceState();
-        boolean adult = llm != null && nsfwLlm != null && isAgeRestricted(voice == null ? null : voice.getChannel());
+        boolean adult = llm != null && nsfwLlm != null && isAgeRestricted(voiceChannel);
         if (adult)
             LOG.info("?chat in an 18+ channel: the router can switch to {} and the 18+ persona", nsfwLlm.getModel());
         sessions.put(guildId, new Session(channel, listener, poller, llm == null ? null : llm.newConversation(),
@@ -571,6 +571,22 @@ public class VoiceManager
             hush(guild);
         }
         bot.getPlayerManager().setUpHandler(guild).getSpeaker().getPlayer().setPaused(false);
+    }
+
+    private static final Set<String> REACTION_WORDS = Set.of("oh", "my", "god", "gosh", "holy", "shit", "fuck", "fucking",
+            "damn", "wow", "whoa", "yeah", "yes", "yep", "yup", "no", "nah", "nope", "ooh", "oo", "ah", "aw", "um", "uh",
+            "umm", "uhh", "hmm", "mm", "ha", "haha", "hahaha", "lol", "okay", "ok", "right", "sure", "nice", "jesus",
+            "christ", "what", "huh", "bro", "dude", "man", "thank", "thanks", "cool", "geez", "jeez", "lord", "the", "hell");
+
+    /**
+     * A short reaction or exclamation ("Holy shit.", "Yeah.", "Ooh.", "Um"):
+     * not for the bot unless it's answering what the bot just asked them.
+     * The router got these wrong (as stop, hush or chat) after the bot spoke.
+     */
+    static boolean isReaction(String text)
+    {
+        List<String> words = words(text);
+        return !words.isEmpty() && words.size() <= 4 && REACTION_WORDS.containsAll(words);
     }
 
     /**
@@ -1003,6 +1019,11 @@ public class VoiceManager
             return;
         }
 
+        if (!named && !followUp && isReaction(said))
+        {
+            LOG.info("Heard {} ({}), a reaction, not for the bot: {}", name, heard, said);
+            return;
+        }
         List<String> recent = session.recent();
         String player = playerState(handler);
 
@@ -1331,6 +1352,14 @@ public class VoiceManager
     {
         Consumer<String> confirm = say == null ? s -> {} : say;
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
+        // spoken stop/skip/pause with nothing playing: nothing to do, and "Stopping the
+        // music." to a silent channel (often a misheard reaction) just adds noise
+        boolean idle = handler.getPlayer().getPlayingTrack() == null && handler.getQueue().isEmpty();
+        if (say != null && idle && (command.equals("stop") || command.equals("skip") || command.equals("pause")))
+        {
+            LOG.info("Ignored {}: nothing is playing", command);
+            return;
+        }
         switch (command)
         {
             case "pause":

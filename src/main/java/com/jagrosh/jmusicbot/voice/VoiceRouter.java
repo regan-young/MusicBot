@@ -95,12 +95,15 @@ public class VoiceRouter
             + "\"nobody asked you, clanker\")\n"
             + "- chat: anything else said to the bot: questions (including about the current song), banter, "
             + "answers to what it asked, requests it can't do as a command\n"
-            + "- none: not talking to the bot\n\n"
+            + "- none: not talking to the bot\n"
+            + "Use stop only when someone clearly asks for the music to stop.\n\n"
             + "Reply with only JSON: {\"to_bot\": true or false, \"command\": \"...\", \"args\": \"...\"}";
 
     // a few worked examples steer a small model far better than more instructions
     private static final String[][] EXAMPLES = {
         { "Sam: did you watch the game last night", "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
+        { "Regan: bot, where's that meme from\nGunnabot: It's from John Cena's 2021 video about ice cream.\nKFC: holy shit",
+          "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
         { "Regan: robot, put on some Fleetwood Mac", "{\"to_bot\": true, \"command\": \"play\", \"args\": \"Fleetwood Mac\"}" },
         { "Regan: bot, chuck on the BBC World Service", "{\"to_bot\": true, \"command\": \"radio\", \"args\": \"BBC World Service\"}" },
         { "Regan: robot, can you do more songs like this one", "{\"to_bot\": true, \"command\": \"mix\", \"args\": \"\"}" },
