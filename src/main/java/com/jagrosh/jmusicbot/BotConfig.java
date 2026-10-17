@@ -42,7 +42,8 @@ public class BotConfig
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
             evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice,
-            llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, smartTurnModel, researchModel, timezone;
+            llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, smartTurnModel, researchModel, timezone,
+            nsfwLlmApi, nsfwLlmKey, nsfwLlmModel, nsfwLlmPrompt;
     private int llmMaxTokens, musicGain;
     private boolean stayInChannel, songInGame, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
@@ -109,6 +110,10 @@ public class BotConfig
             smartTurnModel = config.getString("smartturnmodel");
             researchModel = config.getString("researchmodel");
             timezone = config.getString("timezone");
+            nsfwLlmApi = config.getString("nsfwllmapi");
+            nsfwLlmKey = config.getString("nsfwllmkey");
+            nsfwLlmModel = config.getString("nsfwllmmodel");
+            nsfwLlmPrompt = config.getString("nsfwllmprompt");
             llmMaxTokens = config.getInt("llmmaxtokens");
             musicGain = Math.max(0, Math.min(100, config.getInt("musicgain")));
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
@@ -434,6 +439,26 @@ public class BotConfig
     public String getTimezone()
     {
         return timezone;
+    }
+
+    public String getNsfwLlmApi()
+    {
+        return nsfwLlmApi;
+    }
+
+    public String getNsfwLlmKey()
+    {
+        return nsfwLlmKey;
+    }
+
+    public String getNsfwLlmModel()
+    {
+        return nsfwLlmModel;
+    }
+
+    public String getNsfwLlmPrompt()
+    {
+        return nsfwLlmPrompt;
     }
 
     public int getLlmMaxTokens()

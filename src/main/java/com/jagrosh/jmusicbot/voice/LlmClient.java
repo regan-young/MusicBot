@@ -87,8 +87,25 @@ public class LlmClient
             + "People call you Gunnabot, bot, robot or clanker. Every message you see was said to you, though not "
             + "always by name; the recent channel conversation in the context shows what they're responding to.";
 
-    private final HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10)).build();
+    /** The decision as a JSON schema, keys in the order ReplyStream needs (reply last). */
+    static final JSONObject DECISION_SCHEMA = new JSONObject()
+            .put("type", "json_schema")
+            .put("json_schema", new JSONObject().put("name", "decision").put("strict", true).put("schema", new JSONObject()
+                    .put("type", "object")
+                    .put("properties", new JSONObject()
+                            .put("action", new JSONObject().put("type", "string").put("enum", new JSONArray()
+                                    .put("play").put("radio").put("mix").put("skip").put("pause").put("resume").put("stop")
+                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("chat")))
+                            .put("query", new JSONObject().put("type", "string"))
+                            .put("task", new JSONObject().put("type", "string"))
+                            .put("minutes", new JSONObject().put("type", "number"))
+                            .put("remember", new JSONObject().put("type", "string"))
+                            .put("post", new JSONObject().put("type", "string"))
+                            .put("reply", new JSONObject().put("type", "string")))
+                    .put("required", new JSONArray().put("action").put("query").put("task").put("minutes")
+                            .put("remember").put("post").put("reply"))));
+
+    private final HttpClient http;
     // reading a streamed answer blocks, so it gets its own threads
     private final ExecutorService readers = Executors.newCachedThreadPool(r ->
     {
@@ -108,11 +125,44 @@ public class LlmClient
         this.systemPrompt = persona + ACTIONS;
         this.maxTokens = maxTokens;
         this.openRouter = this.baseUrl.contains("openrouter.ai");
+        // a plain-http local server (LM Studio) never answers Java's HTTP/2 upgrade request
+        this.http = HttpClient.newBuilder()
+                .version(this.baseUrl.startsWith("http://") ? HttpClient.Version.HTTP_1_1 : HttpClient.Version.HTTP_2)
+                .connectTimeout(Duration.ofSeconds(10)).build();
     }
 
     public String getModel()
     {
         return model;
+    }
+
+    private volatile long checkedAt;
+    private volatile boolean reachable;
+
+    /** Whether the API answers (checked at most once a minute), for a local server that may be switched off. */
+    public boolean isReachable()
+    {
+        if (System.currentTimeMillis() - checkedAt < 60_000)
+            return reachable;
+        boolean ok;
+        try
+        {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + "/models")).timeout(Duration.ofSeconds(2))
+                    .header("Authorization", "Bearer " + apiKey).GET().build();
+            ok = http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+        }
+        catch (IOException e)
+        {
+            ok = false;
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            ok = false;
+        }
+        reachable = ok;
+        checkedAt = System.currentTimeMillis();
+        return ok;
     }
 
     public Conversation newConversation()
@@ -185,19 +235,26 @@ public class LlmClient
         public CompletableFuture<Decision> decide(String speaker, String text, String context, Consumer<String> onSentence)
         {
             JSONObject user = new JSONObject().put("role", "user").put("content", speaker + ": " + text);
-            JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", systemPrompt));
+            // OpenRouter: the context goes in its own system message just before the line, so the
+            // long system prompt stays the same and is cached. Local chat templates (Qwen in
+            // LM Studio) reject a system message after the conversation, so it joins the first.
+            JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system")
+                    .put("content", openRouter ? systemPrompt : systemPrompt + "\n\nContext: " + context));
             synchronized (this)
             {
                 history.forEach(messages::put);
             }
-            messages.put(new JSONObject().put("role", "system").put("content", "Context: " + context));
+            if (openRouter)
+                messages.put(new JSONObject().put("role", "system").put("content", "Context: " + context));
             messages.put(user);
 
             JSONObject body = new JSONObject()
                     .put("model", model)
                     .put("max_tokens", maxTokens)
                     .put("stream", true)
-                    .put("response_format", new JSONObject().put("type", "json_object"))
+                    // local servers (LM Studio, llama.cpp) take a schema, not json_object; the
+                    // grammar also stops "thinking" models writing their reasoning out first
+                    .put("response_format", openRouter ? new JSONObject().put("type", "json_object") : DECISION_SCHEMA)
                     .put("messages", messages);
             if (openRouter)
             {

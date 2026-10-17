@@ -205,6 +205,8 @@ public class VoiceManager
     private final Bot bot;
     private final VoiceApi api;
     private final LlmClient llm;
+    // for channels Discord marks age-restricted, or null
+    private final LlmClient nsfwLlm;
     private final VoiceRouter router;
     private final Researcher researcher;
     private final VoiceMemory memory = new VoiceMemory(Path.of("voice-memory.json"));
@@ -238,6 +240,11 @@ public class VoiceManager
         String key = config.getLlmKey();
         this.llm = key == null || key.isBlank() ? null
                 : new LlmClient(config.getLlmApi(), key, config.getLlmModel(), config.getLlmPrompt(), config.getLlmMaxTokens());
+        String nsfwModel = config.getNsfwLlmModel();
+        this.nsfwLlm = llm == null || nsfwModel == null || nsfwModel.isBlank() ? null
+                : new LlmClient(config.getNsfwLlmApi(), config.getNsfwLlmKey(), nsfwModel,
+                        config.getNsfwLlmPrompt().isBlank() ? config.getLlmPrompt() : config.getNsfwLlmPrompt(),
+                        config.getLlmMaxTokens());
         String routerUrl = config.getRouterApi();
         // the router can share the chat LLM's key (both OpenRouter, say)
         String routerKey = config.getRouterKey() == null || config.getRouterKey().isBlank() ? key : config.getRouterKey();
@@ -327,7 +334,11 @@ public class VoiceManager
                     }, workers));
         }, user -> onTalking(guildId, user), smartTurn, turnChecks);
         ScheduledFuture<?> poller = ticker.scheduleAtFixedRate(listener::flushIdle, 100, 100, TimeUnit.MILLISECONDS);
-        sessions.put(guildId, new Session(channel, listener, poller, llm == null ? null : llm.newConversation()));
+        var voice = guild.getSelfMember().getVoiceState();
+        LlmClient brain = brainFor(voice == null ? null : voice.getChannel());
+        if (brain != null && brain == nsfwLlm)
+            LOG.info("?chat in an 18+ channel: using {} and the 18+ persona", brain.getModel());
+        sessions.put(guildId, new Session(channel, listener, poller, brain == null ? null : brain.newConversation()));
         guild.getAudioManager().setReceivingHandler(listener);
     }
 
@@ -676,7 +687,8 @@ public class VoiceManager
         Guild guild = message.getGuild();
         MessageChannel channel = message.getChannel();
         String name = member.getEffectiveName();
-        LlmClient.Conversation conversation = textConversations.computeIfAbsent(channel.getIdLong(), id -> llm.newConversation());
+        LlmClient.Conversation conversation = textConversations.computeIfAbsent(channel.getIdLong(),
+                id -> brainFor(channel).newConversation());
         List<Long> people = new ArrayList<>(List.of(member.getIdLong()));
         message.getMentions().getMembers().forEach(m -> people.add(m.getIdLong()));
         String player = playerState(bot.getPlayerManager().setUpHandler(guild));
@@ -755,6 +767,21 @@ public class VoiceManager
             LOG.info("Research done in {} s ({} searches, ${}): {}", secs, r.searches, String.format("%.4f", r.cost), r.say);
             textReply(message, r.say);
         });
+    }
+
+    /**
+     * The 18+ brain for a channel Discord marks age-restricted (a voice
+     * channel, its built-in text chat, or a text channel), otherwise the normal one.
+     */
+    private LlmClient brainFor(Object channel)
+    {
+        if (nsfwLlm != null && channel instanceof net.dv8tion.jda.api.entities.channel.attribute.IAgeRestrictedChannel c && c.isNSFW())
+        {
+            if (nsfwLlm.isReachable())
+                return nsfwLlm;
+            LOG.warn("The 18+ model at {} isn't answering (PC off?); using the normal one", nsfwLlm.getModel());
+        }
+        return llm;
     }
 
     /** Replies to a message, with no pings. */
