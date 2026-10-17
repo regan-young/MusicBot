@@ -133,7 +133,9 @@ public class VoiceManager
         {
             try
             {
+                long start = System.currentTimeMillis();
                 byte[] wav = api.speak(text);
+                LOG.info("Spoke in {} ms: {}", System.currentTimeMillis() - start, text);
                 Path file = Files.createTempFile("gunna-tts-", ".wav");
                 Files.write(file, wav);
                 Guild g = bot.getJDA().getGuildById(guildId);
@@ -185,6 +187,7 @@ public class VoiceManager
         if (session == null || guild == null)
             return;
         String text;
+        long start = System.currentTimeMillis();
         try
         {
             text = api.transcribe(wav);
@@ -203,6 +206,8 @@ public class VoiceManager
 
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
         VoiceCommand cmd = VoiceCommand.parse(text);
+        LOG.info("Heard {} ({} ms audio, STT {} ms) -> {}: {}", name, VoiceAudio.durationMs(wav.length - 44),
+                System.currentTimeMillis() - start, cmd.type, text);
         switch (cmd.type)
         {
             case PLAY:
@@ -247,10 +252,15 @@ public class VoiceManager
         }
         // in a group, only answer when spoken to
         if (!cmd.addressed && humansInChannel(guild) > 1)
+        {
+            LOG.info("Not addressed in a group, not answering");
             return;
+        }
         try
         {
+            long start = System.currentTimeMillis();
             String reply = session.conversation.reply(name, cmd.arg);
+            LOG.info("LLM replied in {} ms: {}", System.currentTimeMillis() - start, reply);
             if (reply.isEmpty())
                 return;
             session.channel.sendMessage(FormatUtil.filter("\uD83E\uDD16 **" + guild.getSelfMember().getEffectiveName() + ":** " + reply)).queue(); // 🤖
