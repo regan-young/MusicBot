@@ -13,26 +13,32 @@
  */
 package com.jagrosh.jmusicbot.voice;
 
+import com.jagrosh.jdautilities.command.Command;
+import com.jagrosh.jdautilities.command.CommandClient;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.BotConfig;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
-import com.jagrosh.jmusicbot.audio.RequestMetadata;
-import com.jagrosh.jmusicbot.utils.FormatUtil;
+import com.jagrosh.jmusicbot.commands.DJCommand;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.User;
@@ -42,40 +48,85 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Voice features: ?say (text-to-speech) and ?interact, which listens to the
- * voice channel, transcribes each utterance, and runs it as a playback
- * command or answers it out loud. Speech
- * runs on an external OpenAI-compatible server (see {@link VoiceApi}) and the
- * LLM on OpenRouter (see {@link LlmClient}), which decides whether each
- * utterance is a playback command or just talk and writes the spoken reply.
- * Transcripts and replies are logged rather than posted.
+ * voice channel and lets people talk to the bot naturally.
+ *
+ * Each utterance is transcribed ({@link VoiceApi}), then a small local LLM
+ * ({@link VoiceRouter}) reads the recent conversation and decides whether it
+ * was said to the bot and which command it maps to. Commands run through the
+ * bot's real commands (?play, ?radio, ...) via {@link VoiceCommandEvent};
+ * anything else goes to the conversational LLM ({@link LlmClient}) and the
+ * reply is spoken. Saying one of the bot's names always counts as talking to
+ * it. Transcripts and replies are logged rather than posted.
  */
 public class VoiceManager
 {
     private static final Logger LOG = LoggerFactory.getLogger(VoiceManager.class);
 
+    private static final String BOT_NAME = "Gunnabot";
+    // how much of the channel conversation the router and LLM see
+    private static final int LOG_LINES = 10;
+    private static final long LOG_MAX_AGE_MS = 3 * 60_000;
+    // a line this soon after the bot spoke is likely a reply to it
+    private static final long FOLLOW_UP_MS = 20_000;
+
+    private static class Line
+    {
+        final long time = System.currentTimeMillis();
+        final String text;
+
+        Line(String speaker, String text)
+        {
+            this.text = speaker + ": " + text;
+        }
+    }
+
     private static class Session
     {
-        final VoiceListener listener;
         final MessageChannel channel;
         final ScheduledFuture<?> poller;
         final LlmClient.Conversation conversation;
+        private final Deque<Line> log = new ArrayDeque<>();
+        private volatile long lastSpoke;
 
-        Session(VoiceListener listener, MessageChannel channel, ScheduledFuture<?> poller, LlmClient.Conversation conversation)
+        Session(MessageChannel channel, ScheduledFuture<?> poller, LlmClient.Conversation conversation)
         {
-            this.listener = listener;
             this.channel = channel;
             this.poller = poller;
             this.conversation = conversation;
+        }
+
+        synchronized void add(String speaker, String text)
+        {
+            log.add(new Line(speaker, text));
+            long cutoff = System.currentTimeMillis() - LOG_MAX_AGE_MS;
+            while (log.size() > LOG_LINES || (!log.isEmpty() && log.peekFirst().time < cutoff))
+                log.removeFirst();
+        }
+
+        synchronized List<String> recent()
+        {
+            List<String> lines = new ArrayList<>();
+            log.forEach(l -> lines.add(l.text));
+            return lines;
+        }
+
+        boolean botJustSpoke()
+        {
+            return System.currentTimeMillis() - lastSpoke < FOLLOW_UP_MS;
         }
     }
 
     private final Bot bot;
     private final VoiceApi api;
     private final LlmClient llm;
+    private final VoiceRouter router;
+    private volatile CommandClient client;
     private final Map<Long, Session> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService ticker = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "voice-ticker"));
     // speech requests are slow-ish network calls; keep them off JDA's threads
     private final ExecutorService workers = Executors.newFixedThreadPool(2, r -> daemon(r, "voice-worker"));
+    // LLM calls run beside the router, so they get their own threads
+    private final ExecutorService llmCalls = Executors.newCachedThreadPool(r -> daemon(r, "voice-llm"));
 
     public VoiceManager(Bot bot, BotConfig config)
     {
@@ -86,12 +137,25 @@ public class VoiceManager
         String key = config.getLlmKey();
         this.llm = key == null || key.isBlank() ? null
                 : new LlmClient(config.getLlmApi(), key, config.getLlmModel(), config.getLlmPrompt(), config.getLlmMaxTokens());
+        String routerUrl = config.getRouterApi();
+        this.router = routerUrl == null || routerUrl.isBlank() ? null : new VoiceRouter(routerUrl, config.getRouterModel());
+    }
+
+    /** Voice commands run through the same command client as typed ones. */
+    public void setCommandClient(CommandClient client)
+    {
+        this.client = client;
     }
 
     /** The LLM model ?interact talks to, or null when there's no LLM configured. */
     public String getLlmModel()
     {
         return llm == null ? null : llm.getModel();
+    }
+
+    public boolean hasRouter()
+    {
+        return router != null;
     }
 
     public boolean isEnabled()
@@ -110,7 +174,7 @@ public class VoiceManager
         long guildId = guild.getIdLong();
         VoiceListener listener = new VoiceListener((user, wav) -> workers.submit(() -> onUtterance(guildId, user, wav)));
         ScheduledFuture<?> poller = ticker.scheduleAtFixedRate(listener::flushIdle, 100, 100, TimeUnit.MILLISECONDS);
-        sessions.put(guildId, new Session(listener, channel, poller, llm == null ? null : llm.newConversation()));
+        sessions.put(guildId, new Session(channel, poller, llm == null ? null : llm.newConversation()));
         guild.getAudioManager().setReceivingHandler(listener);
     }
 
@@ -126,9 +190,15 @@ public class VoiceManager
     /** Speaks text in the guild's voice channel; the bot must already be connected. */
     public void speak(Guild guild, String text)
     {
-        if (api == null || text.isBlank())
+        if (api == null || text == null || text.isBlank())
             return;
         long guildId = guild.getIdLong();
+        Session session = sessions.get(guildId);
+        if (session != null)
+        {
+            session.add(BOT_NAME, text);
+            session.lastSpoke = System.currentTimeMillis();
+        }
         workers.submit(() ->
         {
             try
@@ -199,94 +269,203 @@ public class VoiceManager
         }
         if (text.isBlank())
             return;
+        long sttMs = System.currentTimeMillis() - start;
+        long audioMs = VoiceAudio.durationMs(wav.length - 44);
 
         Member member = guild.getMember(user);
         String name = member != null ? member.getEffectiveName() : user.getName();
-        long sttMs = System.currentTimeMillis() - start;
-        // only respond when called by name, so the bot stays out of conversations
-        VoiceCommand parsed = VoiceCommand.parse(text);
-        if (!parsed.addressed)
-        {
-            LOG.info("Heard {} ({} ms audio, STT {} ms), not addressed: {}", name,
-                    VoiceAudio.durationMs(wav.length - 44), sttMs, text);
-            return;
-        }
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
+        boolean followUp = session.botJustSpoke();
+        session.add(name, text);
+        List<String> recent = session.recent();
+        String player = playerState(handler);
+        VoiceCommand parsed = VoiceCommand.parse(text);
+        boolean named = parsed.addressed;
 
-        // The LLM classifies the utterance and writes the reply in one call;
-        // keyword matching is the fallback when there's no LLM or it fails.
-        VoiceCommand.Type action;
-        String query, reply;
-        LlmClient.Decision d = null;
-        if (session.conversation != null)
+        // When the bot is named it's almost certainly being spoken to, so the
+        // chat LLM starts alongside the router and a chat reply isn't delayed
+        // by it. Unnamed lines wait for the router, so chatter between friends
+        // never leaves the network.
+        CompletableFuture<LlmClient.Decision> chat = named ? askLlm(session, name, text, player, recent) : null;
+
+        VoiceRouter.Route route = null;
+        long routerMs = 0;
+        if (router != null)
         {
-            long llmStart = System.currentTimeMillis();
+            long t = System.currentTimeMillis();
             try
             {
-                d = session.conversation.decide(name, text, playerContext(handler));
-                LOG.info("Heard {} ({} ms audio, STT {} ms, LLM {} ms): {} -> {} [{}] {}", name,
-                        VoiceAudio.durationMs(wav.length - 44), sttMs, System.currentTimeMillis() - llmStart,
-                        text, d.action, d.query, d.reply);
+                route = router.route(recent, followUp, player);
             }
             catch (Exception e)
             {
-                LOG.warn("LLM request failed, falling back to keywords", e);
+                LOG.warn("Router request failed, using the bot's name only", e);
             }
-        }
-        if (d != null)
-        {
-            action = d.action;
-            query = d.query;
-            reply = LlmClient.forSpeech(d.reply);
-        }
-        else
-        {
-            LOG.info("Heard {} ({} ms audio, STT {} ms): {} -> {} (keywords)", name,
-                    VoiceAudio.durationMs(wav.length - 44), sttMs, text, parsed.type);
-            action = parsed.type;
-            query = parsed.arg;
-            reply = "";
+            routerMs = System.currentTimeMillis() - t;
         }
 
+        boolean toBot = named || (route != null && route.toBot);
+        if (!toBot)
+        {
+            LOG.info("Heard {} ({} ms audio, STT {} ms, router {} ms), not for the bot: {}", name, audioMs, sttMs, routerMs, text);
+            return;
+        }
+        // named but the router saw no command: treat it as talk
+        String command = route == null || !route.toBot ? "chat" : route.command;
+        String args = route == null ? "" : route.args;
+        LOG.info("Heard {} ({} ms audio, STT {} ms, router {} ms){}: {} -> {} [{}]", name, audioMs, sttMs, routerMs,
+                named ? "" : (followUp ? " follow-up" : " unnamed"), text, command, args);
+
+        if (!command.equals("chat"))
+        {
+            run(guild, member, session, command, args);
+            return;
+        }
+        if (session.conversation == null)
+        {
+            // no chat LLM: fall back to the simple keyword commands
+            runDecision(guild, member, session, parsed.type, parsed.arg, "");
+            return;
+        }
+        try
+        {
+            long t = System.currentTimeMillis();
+            LlmClient.Decision d = (chat != null ? chat : askLlm(session, name, text, player, recent)).get(45, TimeUnit.SECONDS);
+            LOG.info("LLM {} ms: {} [{}] {}", System.currentTimeMillis() - t, d.action, d.query, d.reply);
+            runDecision(guild, member, session, d.action, d.query, LlmClient.forSpeech(d.reply));
+        }
+        catch (Exception e)
+        {
+            LOG.warn("LLM request failed", e);
+            speak(guild, "Sorry, my brain isn't responding right now.");
+        }
+    }
+
+    private CompletableFuture<LlmClient.Decision> askLlm(Session session, String name, String text, String player, List<String> recent)
+    {
+        if (session.conversation == null)
+            return null;
+        // the last line is the one being answered; the rest is context
+        List<String> before = recent.subList(0, Math.max(0, recent.size() - 1));
+        String context = "Player: " + player
+                + (before.isEmpty() ? "" : " Recent conversation in the channel:\n" + String.join("\n", before));
+        return CompletableFuture.supplyAsync(() ->
+        {
+            try
+            {
+                return session.conversation.decide(name, text, context);
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
+        }, llmCalls);
+    }
+
+    /** Acts on what the chat LLM (or the keyword fallback) decided. */
+    private void runDecision(Guild guild, Member member, Session session, VoiceCommand.Type action, String query, String reply)
+    {
         switch (action)
         {
-            case PLAY:
-                // the confirmation names the actual track once it has loaded
-                play(guild, handler, user, query, session.channel);
-                break;
-            case SKIP:
-                if (handler.getPlayer().getPlayingTrack() == null)
-                    speak(guild, "Nothing's playing.");
-                else
-                {
-                    handler.getPlayer().stopTrack();
-                    speak(guild, orElse(reply, "Skipped."));
-                }
-                break;
-            case PAUSE:
-                handler.getPlayer().setPaused(true);
-                speak(guild, orElse(reply, "Paused."));
-                break;
-            case RESUME:
-                handler.getPlayer().setPaused(false);
-                speak(guild, orElse(reply, "Resuming."));
-                break;
-            case STOP:
-                handler.stopAndClear();
-                speak(guild, orElse(reply, "Stopped, and cleared the queue."));
-                break;
+            case PLAY:   run(guild, member, session, "play", query); break;
+            case RADIO:  run(guild, member, session, "radio", query); break;
+            case MIX:    run(guild, member, session, "mix", query); break;
+            case SKIP:   run(guild, member, session, "skip", ""); break;
+            case STOP:   run(guild, member, session, "stop", ""); break;
+            case PAUSE:  run(guild, member, session, "pause", ""); break;
+            case RESUME: run(guild, member, session, "resume", ""); break;
             case NOW_PLAYING:
-                AudioTrack t = handler.getPlayer().getPlayingTrack();
+                AudioTrack t = bot.getPlayerManager().setUpHandler(guild).getPlayer().getPlayingTrack();
                 speak(guild, t == null ? "Nothing's playing." : "This is " + t.getInfo().title + ".");
                 break;
             default:
-                // chat; without an LLM there's nothing to say
                 speak(guild, reply);
         }
     }
 
-    /** One line describing the player for the LLM, so it can answer "what's this song?". */
-    private String playerContext(AudioHandler handler)
+    /**
+     * Runs a playback command. Pause and resume act on the player directly
+     * (?pause is a toggle); the rest run the real command as the speaker, and
+     * the bot says a short confirmation, or the command's error if it fails.
+     */
+    private void run(Guild guild, Member member, Session session, String command, String args)
+    {
+        AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
+        switch (command)
+        {
+            case "pause":
+                handler.getPlayer().setPaused(true);
+                speak(guild, "Paused.");
+                return;
+            case "resume":
+                handler.getPlayer().setPaused(false);
+                speak(guild, "Resuming.");
+                return;
+            case "volume":
+                if (!args.matches("\\d{1,3}"))
+                {
+                    speak(guild, "How loud would you like it, out of a hundred and fifty?");
+                    return;
+                }
+                break;
+            case "play":
+            case "radio":
+                if (args.isBlank())
+                {
+                    speak(guild, command.equals("play") ? "What should I play?" : "Which station?");
+                    return;
+                }
+                break;
+            default:
+        }
+        CommandClient c = client;
+        if (c == null || member == null)
+            return;
+        AtomicBoolean spokeError = new AtomicBoolean();
+        VoiceCommandEvent event = new VoiceCommandEvent(member, session.channel, args, c, reply ->
+        {
+            // speak the first error or warning, cleaned up; success replies are
+            // covered by the confirmation
+            if ((reply.startsWith(c.getError()) || reply.startsWith(c.getWarning())) && spokeError.compareAndSet(false, true))
+                speak(guild, spokenReply(reply));
+        });
+        String name = command;
+        if (command.equals("skip") && DJCommand.checkDJPermission(event))
+            name = "forceskip"; // a DJ's skip shouldn't be a vote, same as /skip
+        Command cmd = find(c, name);
+        if (cmd == null)
+        {
+            LOG.warn("Voice command {} not found", name);
+            return;
+        }
+        String ack = VoiceRouter.ACKS.get(command);
+        if (ack != null)
+            speak(guild, String.format(ack, args));
+        cmd.run(event);
+    }
+
+    private static Command find(CommandClient client, String name)
+    {
+        for (Command c : client.getCommands())
+            if (c.getName().equalsIgnoreCase(name))
+                return c;
+        return null;
+    }
+
+    /** Turns a chat reply like "❌ No results found for `xyz`!" into something speakable. */
+    static String spokenReply(String reply)
+    {
+        String s = LlmClient.forSpeech(reply.replaceAll("<[@#&!:a-zA-Z0-9_]+>", ""))
+                .replaceAll("[\\x{2190}-\\x{2BFF}]", "")
+                .trim();
+        int cut = s.indexOf(". ");
+        if (cut > 0 && cut < 160)
+            s = s.substring(0, cut + 1);
+        return s.length() > 160 ? s.substring(0, 157) + "..." : s;
+    }
+
+    /** One line describing the player for the router and LLM. */
+    private String playerState(AudioHandler handler)
     {
         AudioTrack t = handler.getPlayer().getPlayingTrack();
         StringBuilder sb = new StringBuilder();
@@ -298,7 +477,8 @@ public class VoiceManager
             sb.append(handler.getPlayer().isPaused() ? "Paused: " : "Now playing: ")
               .append(label != null ? label : t.getInfo().title);
             if (t.getInfo().author != null && !t.getInfo().author.isEmpty())
-                sb.append(" (").append(t.getInfo().author).append(")");
+                sb.append(" by ").append(t.getInfo().author);
+            sb.append('.');
         }
         List<QueuedTrack> queue = handler.getQueue().getList();
         if (!queue.isEmpty())
@@ -310,62 +490,8 @@ public class VoiceManager
                 sb.append(" and ").append(queue.size() - 3).append(" more");
             sb.append('.');
         }
+        sb.append(" Volume ").append(handler.getVolume()).append('.');
         return sb.toString();
-    }
-
-    private static String orElse(String s, String fallback)
-    {
-        return s == null || s.isBlank() ? fallback : s;
-    }
-
-    private void play(Guild guild, AudioHandler handler, User user, String query, MessageChannel channel)
-    {
-        bot.getPlayerManager().loadItemOrdered(guild, "ytsearch:" + query, new AudioLoadResultHandler()
-        {
-            @Override
-            public void trackLoaded(AudioTrack track)
-            {
-                queue(track);
-            }
-
-            @Override
-            public void playlistLoaded(AudioPlaylist playlist)
-            {
-                AudioTrack track = playlist.getSelectedTrack() != null ? playlist.getSelectedTrack()
-                        : playlist.getTracks().isEmpty() ? null : playlist.getTracks().get(0);
-                if (track == null)
-                    noMatches();
-                else
-                    queue(track);
-            }
-
-            @Override
-            public void noMatches()
-            {
-                speak(guild, "I couldn't find " + query + ".");
-            }
-
-            @Override
-            public void loadFailed(FriendlyException e)
-            {
-                speak(guild, "Sorry, that didn't load.");
-            }
-
-            private void queue(AudioTrack track)
-            {
-                if (bot.getConfig().isTooLong(track))
-                {
-                    speak(guild, "That one's too long.");
-                    return;
-                }
-                RequestMetadata rm = new RequestMetadata(user, new RequestMetadata.RequestInfo(query, track.getInfo().uri));
-                int pos = handler.addTrack(new QueuedTrack(track, rm)) + 1;
-                String title = track.getInfo().title;
-                channel.sendMessage(FormatUtil.filter(bot.getConfig().getSuccess() + " Added **" + title + "** "
-                        + (pos == 0 ? "to begin playing" : "to the queue at position " + pos))).queue();
-                speak(guild, pos == 0 ? "Playing " + title + "." : "Queued " + title + ".");
-            }
-        });
     }
 
     private static Thread daemon(Runnable r, String name)

@@ -52,10 +52,16 @@ public class InteractCmd extends MusicCommand
         }
         voice.startListening(event.getGuild(), event.getChannel());
         String prefix = event.getClient().getPrefix();
-        String how = "I only respond when you call me *Gunnabot*, *bot*, *robot* or *clanker*. "
-                + (voice.getLlmModel() == null
-                ? "Try *bot, play Fleetwood Mac*, *bot, skip*, *pause*, *resume* or *stop*."
-                : "Ask me anything, or ask for music however you like, e.g. *robot, put on some Six60* (`" + voice.getLlmModel() + "`).");
+        String how;
+        if (voice.hasRouter())
+            how = "Just talk: I'll work out when you're talking to me, and saying *Gunnabot*, *bot*, *robot* or "
+                    + "*clanker* always gets my attention. Ask for music however you like, e.g. *put on some Six60* or "
+                    + "*chuck on RNZ*.";
+        else
+            how = "I only respond when you call me *Gunnabot*, *bot*, *robot* or *clanker*. "
+                    + (voice.getLlmModel() == null
+                    ? "Try *bot, play Fleetwood Mac*, *bot, skip*, *pause*, *resume* or *stop*."
+                    : "Ask me anything, or ask for music however you like, e.g. *robot, put on some Six60*.");
         event.replySuccess("🎙️ Listening in " + event.getMember().getVoiceState().getChannel().getAsMention()
                 + ". " + how + " `" + prefix + name + "` again to stop.");
         voice.speak(event.getGuild(), "Gunnabot here. Say my name if you need me.");

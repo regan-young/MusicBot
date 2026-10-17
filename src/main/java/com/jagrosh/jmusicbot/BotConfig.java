@@ -42,7 +42,7 @@ public class BotConfig
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
             evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice,
-            llmApi, llmKey, llmModel, llmPrompt;
+            llmApi, llmKey, llmModel, llmPrompt, routerApi, routerModel;
     private int llmMaxTokens, musicGain;
     private boolean stayInChannel, songInGame, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
@@ -103,6 +103,8 @@ public class BotConfig
             llmKey = config.getString("llmkey");
             llmModel = config.getString("llmmodel");
             llmPrompt = config.getString("llmprompt");
+            routerApi = config.getString("routerapi");
+            routerModel = config.getString("routermodel");
             llmMaxTokens = config.getInt("llmmaxtokens");
             musicGain = Math.max(0, Math.min(100, config.getInt("musicgain")));
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
@@ -398,6 +400,16 @@ public class BotConfig
     public String getLlmPrompt()
     {
         return llmPrompt;
+    }
+
+    public String getRouterApi()
+    {
+        return routerApi;
+    }
+
+    public String getRouterModel()
+    {
+        return routerModel;
     }
 
     public int getLlmMaxTokens()

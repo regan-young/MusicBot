@@ -94,6 +94,7 @@ public class JMusicBot {
         SettingsManager settings = new SettingsManager();
         Bot bot = new Bot(waiter, config, settings);
         CommandClient client = createCommandClient(config, settings, bot);
+        bot.getVoiceManager().setCommandClient(client);
 
         if (!prompt.isNoGUI()) {
             try {

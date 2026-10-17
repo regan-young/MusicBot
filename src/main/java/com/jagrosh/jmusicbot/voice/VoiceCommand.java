@@ -27,7 +27,8 @@ import java.util.regex.Pattern;
  */
 public final class VoiceCommand
 {
-    public enum Type { PLAY, SKIP, PAUSE, RESUME, STOP, NOW_PLAYING, CHAT }
+    // RADIO and MIX only come from the LLM; keyword parsing doesn't produce them
+    public enum Type { PLAY, RADIO, MIX, SKIP, PAUSE, RESUME, STOP, NOW_PLAYING, CHAT }
 
     public final Type type;
     /** The song query for PLAY, the original transcript for CHAT, otherwise empty. */

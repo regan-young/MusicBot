@@ -39,16 +39,19 @@ public class LlmClient
 
     // Appended to the configurable persona prompt; the code depends on this format.
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
-            + "only a JSON object, no other text: {\"action\": one of \"play\", \"skip\", \"pause\", \"resume\", "
-            + "\"stop\", \"chat\"; \"query\": the song, artist or genre to search for (play only, otherwise empty); "
+            + "only a JSON object, no other text: {\"action\": one of \"play\", \"radio\", \"mix\", \"skip\", \"pause\", "
+            + "\"resume\", \"stop\", \"chat\"; \"query\": what to search for (play, radio and mix only, otherwise empty); "
             + "\"reply\": what to say out loud}. "
-            + "Use play when they want something played or queued (query = what to search YouTube for), "
+            + "Use play when they want a song, artist or album played or queued (query = what to search YouTube for), "
+            + "radio for a live radio station or radio of a genre (query = station name or genre), mix for several "
+            + "songs like a song or artist (query = that song or artist, empty for like what's playing), "
             + "skip to move to the next song, pause and resume to pause or continue, stop to stop the music and "
             + "clear the queue. A temporary halt (\"hang on\", \"stop it for a sec\", \"hold the music\") is pause; "
-            + "use stop only when they want the music finished.Use chat for everything else, including questions about the current song, which is "
-            + "given in the context line. Only choose a music action when they clearly ask for it; otherwise chat. "
-            + "For music actions keep reply to a few words, like \"Skipping.\" "
-            + "People call you Gunnabot, bot, robot or clanker; every message you see was addressed to you.";
+            + "use stop only when they want the music finished. Use chat for everything else, including questions "
+            + "about the current song, which is given in the context. Only choose a music action when they clearly "
+            + "ask for it; otherwise chat. For music actions keep reply to a few words, like \"Skipping.\" "
+            + "People call you Gunnabot, bot, robot or clanker. Every message you see was said to you, though not "
+            + "always by name; the recent channel conversation in the context shows what they're responding to.";
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
@@ -158,6 +161,8 @@ public class LlmClient
         switch (o.optString("action", "chat").trim().toLowerCase(Locale.ROOT))
         {
             case "play":   action = query.isEmpty() ? VoiceCommand.Type.RESUME : VoiceCommand.Type.PLAY; break;
+            case "radio":  action = query.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.RADIO; break;
+            case "mix":    action = VoiceCommand.Type.MIX; break;
             case "skip":   action = VoiceCommand.Type.SKIP; break;
             case "pause":  action = VoiceCommand.Type.PAUSE; break;
             case "resume": action = VoiceCommand.Type.RESUME; break;
