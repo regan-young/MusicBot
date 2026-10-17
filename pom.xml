@@ -70,6 +70,13 @@
             <type>pom</type>
         </dependency>
 
+        <!-- Voice: Smart Turn end-of-turn model -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.30.0</version>
+        </dependency>
+
         <!-- Music Dependencies -->
         <dependency>
             <groupId>dev.arbjerg</groupId>
@@ -162,6 +169,17 @@
                                 <include>*:*</include>
                             </includes>
                         </artifactSet>
+                        <filters>
+                            <!-- the bot runs on linux-x64 (Docker); the other natives are ~45 MB -->
+                            <filter>
+                                <artifact>com.microsoft.onnxruntime:onnxruntime</artifact>
+                                <excludes>
+                                    <exclude>ai/onnxruntime/native/osx-*/**</exclude>
+                                    <exclude>ai/onnxruntime/native/win-*/**</exclude>
+                                    <exclude>ai/onnxruntime/native/linux-aarch64/**</exclude>
+                                </excludes>
+                            </filter>
+                        </filters>
                         <transformers>
                             <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                 <resource>reference.conf</resource>

@@ -41,6 +41,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.User;
@@ -176,6 +177,9 @@ public class VoiceManager
     private final ExecutorService llmCalls = Executors.newCachedThreadPool(r -> daemon(r, "voice-llm"));
     // bumped by "hush" so queued speech is dropped
     private final Map<Long, AtomicInteger> speechEpochs = new ConcurrentHashMap<>();
+    private final SmartTurn smartTurn;
+    // end-of-turn checks take ~30 ms of CPU each; one at a time is plenty
+    private final ExecutorService turnChecks = Executors.newSingleThreadExecutor(r -> daemon(r, "voice-turn"));
 
     public VoiceManager(Bot bot, BotConfig config)
     {
@@ -191,6 +195,31 @@ public class VoiceManager
         String routerKey = config.getRouterKey() == null || config.getRouterKey().isBlank() ? key : config.getRouterKey();
         this.router = routerUrl == null || routerUrl.isBlank() ? null
                 : new VoiceRouter(routerUrl, routerKey, config.getRouterModel());
+        this.smartTurn = loadSmartTurn(config.getSmartTurnModel());
+    }
+
+    private static SmartTurn loadSmartTurn(String model)
+    {
+        if (model == null || model.isBlank())
+            return null;
+        Path path = Path.of(model);
+        if (!Files.exists(path))
+        {
+            LOG.info("No Smart Turn model at {}; utterances end after {} ms of silence", path, VoiceListener.END_SILENCE_MS);
+            return null;
+        }
+        try
+        {
+            SmartTurn st = new SmartTurn(path);
+            LOG.info("Smart Turn end-of-turn model loaded from {}", path);
+            return st;
+        }
+        catch (Exception | LinkageError e)
+        {
+            // LinkageError: ONNX Runtime's native library didn't load
+            LOG.warn("Could not load Smart Turn; utterances end after a fixed silence", e);
+            return null;
+        }
     }
 
     /** Voice commands run through the same command client as typed ones. */
@@ -224,9 +253,8 @@ public class VoiceManager
     {
         stopListening(guild);
         long guildId = guild.getIdLong();
-        VoiceListener listener = new VoiceListener((user, wav) ->
+        VoiceListener listener = new VoiceListener((user, wav, heardAt, ending) ->
         {
-            long heardAt = System.currentTimeMillis();
             Session s = sessions.get(guildId);
             if (s == null)
                 return;
@@ -236,14 +264,14 @@ public class VoiceManager
                     {
                         try
                         {
-                            onUtterance(guildId, user, wav, heardAt);
+                            onUtterance(guildId, user, wav, heardAt, ending);
                         }
                         catch (Exception e)
                         {
                             LOG.warn("Voice line failed", e);
                         }
                     }, workers));
-        });
+        }, smartTurn, turnChecks);
         ScheduledFuture<?> poller = ticker.scheduleAtFixedRate(listener::flushIdle, 100, 100, TimeUnit.MILLISECONDS);
         sessions.put(guildId, new Session(channel, listener, poller, llm == null ? null : llm.newConversation()));
         guild.getAudioManager().setReceivingHandler(listener);
@@ -268,7 +296,7 @@ public class VoiceManager
     /**
      * Speaks text one sentence at a time, so the first sentence plays while
      * the rest are synthesised.
-     * @param heardAt when the line being answered was heard, for the latency log, or 0
+     * @param heardAt when the speaker being answered stopped talking, for the latency log, or 0
      */
     private void speak(Guild guild, String text, long heardAt)
     {
@@ -281,36 +309,44 @@ public class VoiceManager
             session.add(BOT_NAME, text);
             session.lastSpoke = System.currentTimeMillis();
         }
-        AtomicInteger epoch = speechEpochs.computeIfAbsent(guildId, id -> new AtomicInteger());
-        int asked = epoch.get();
+        int asked = epoch(guildId).get();
         List<String> parts = sentences(text);
         for (int i = 0; i < parts.size(); i++)
+            say(guildId, parts.get(i), i == 0 ? heardAt : 0, asked);
+    }
+
+    /**
+     * Queues one sentence to be synthesised and played.
+     * @param asked the speech epoch when it was asked for; if the bot's been hushed since, it's dropped
+     */
+    private void say(long guildId, String part, long heardAt, int asked)
+    {
+        AtomicInteger epoch = epoch(guildId);
+        speech.submit(() ->
         {
-            String part = parts.get(i);
-            boolean first = i == 0;
-            speech.submit(() ->
+            if (epoch.get() != asked)
+                return; // hushed
+            try
             {
-                if (epoch.get() != asked)
-                    return; // hushed
-                try
-                {
-                    long start = System.currentTimeMillis();
-                    byte[] wav = api.speak(part);
-                    long now = System.currentTimeMillis();
-                    if (first && heardAt > 0)
-                        // heardAt is END_SILENCE_MS after they stopped talking
-                        LOG.info("Spoke in {} ms, {} ms after they stopped talking: {}", now - start,
-                                now - heardAt + VoiceListener.END_SILENCE_MS, part);
-                    else
-                        LOG.info("Spoke in {} ms: {}", now - start, part);
-                    play(guildId, wav, epoch, asked);
-                }
-                catch (Exception e)
-                {
-                    LOG.warn("TTS request failed", e);
-                }
-            });
-        }
+                long start = System.currentTimeMillis();
+                byte[] wav = api.speak(part);
+                long now = System.currentTimeMillis();
+                if (heardAt > 0)
+                    LOG.info("Spoke in {} ms, {} ms after they stopped talking: {}", now - start, now - heardAt, part);
+                else
+                    LOG.info("Spoke in {} ms: {}", now - start, part);
+                play(guildId, wav, epoch, asked);
+            }
+            catch (Exception e)
+            {
+                LOG.warn("TTS request failed", e);
+            }
+        });
+    }
+
+    private AtomicInteger epoch(long guildId)
+    {
+        return speechEpochs.computeIfAbsent(guildId, id -> new AtomicInteger());
     }
 
     private void play(long guildId, byte[] wav, AtomicInteger epoch, int asked) throws java.io.IOException
@@ -356,7 +392,7 @@ public class VoiceManager
     /** Stops the bot talking: drops queued speech and cuts off the current clip. Music carries on. */
     private void hush(Guild guild)
     {
-        speechEpochs.computeIfAbsent(guild.getIdLong(), id -> new AtomicInteger()).incrementAndGet();
+        epoch(guild.getIdLong()).incrementAndGet();
         bot.getPlayerManager().setUpHandler(guild).getSpeaker().clear();
     }
 
@@ -385,7 +421,11 @@ public class VoiceManager
         return out;
     }
 
-    private void onUtterance(long guildId, User user, byte[] wav, long heardAt)
+    /**
+     * @param heardAt when they stopped talking
+     * @param ending how the end of the utterance was decided, for the logs
+     */
+    private void onUtterance(long guildId, User user, byte[] wav, long heardAt, String ending)
     {
         Session session = sessions.get(guildId);
         Guild guild = bot.getJDA().getGuildById(guildId);
@@ -436,13 +476,14 @@ public class VoiceManager
             line = session.add(name, text);
         String said = text;
         String how = (before != null ? " continued" : "") + (named ? "" : followUp ? " follow-up" : " unnamed");
+        String heard = audioMs + " ms audio, " + ending + ", STT " + sttMs + " ms";
 
         if (VoiceCommand.isNameOnly(said))
         {
             Turn turn = new Turn(said, true, line);
             session.turns.put(uid, turn);
             turn.pending = ticker.schedule(() -> answerName(guild, session, user, turn), NAME_WAIT_MS, TimeUnit.MILLISECONDS);
-            LOG.info("Heard {} ({} ms audio, STT {} ms){}: {} -> waiting for the rest", name, audioMs, sttMs, how, said);
+            LOG.info("Heard {} ({}){}: {} -> waiting for the rest", name, heard, how, said);
             return;
         }
 
@@ -453,7 +494,9 @@ public class VoiceManager
         // being spoken to, so the chat LLM starts alongside the router and a
         // chat reply isn't delayed by it. It's cancelled if the router picks a
         // command instead.
-        CompletableFuture<LlmClient.Decision> chat = named || followUp ? askLlm(session, name, said, player, recent) : null;
+        // Its sentences are held until the router agrees it's chat.
+        SpeechGate gate = new SpeechGate();
+        CompletableFuture<LlmClient.Decision> chat = named || followUp ? askLlm(session, name, said, player, recent, gate) : null;
 
         VoiceRouter.Route route = null;
         long routerMs = 0;
@@ -475,16 +518,18 @@ public class VoiceManager
         // named but the router saw no command: treat it as talk
         String command = !toBot ? "none" : route == null || !route.toBot ? "chat" : route.command;
         if (chat != null && !command.equals("chat"))
+        {
+            gate.close();
             chat.cancel(true);
+        }
         if (!toBot)
         {
-            LOG.info("Heard {} ({} ms audio, STT {} ms, router {} ms), not for the bot: {}", name, audioMs, sttMs, routerMs, said);
+            LOG.info("Heard {} ({}, router {} ms), not for the bot: {}", name, heard, routerMs, said);
             return;
         }
         session.lastAnswered = uid;
         String args = route == null ? "" : route.args;
-        LOG.info("Heard {} ({} ms audio, STT {} ms, router {} ms){}: {} -> {} [{}]", name, audioMs, sttMs, routerMs,
-                how, said, command, args);
+        LOG.info("Heard {} ({}, router {} ms){}: {} -> {} [{}]", name, heard, routerMs, how, said, command, args);
 
         if (!command.equals("chat"))
         {
@@ -499,24 +544,90 @@ public class VoiceManager
             return;
         }
         Turn turn = new Turn(said, named, line);
-        CompletableFuture<LlmClient.Decision> reply = chat != null ? chat : askLlm(session, name, said, player, recent);
+        CompletableFuture<LlmClient.Decision> reply = chat != null ? chat : askLlm(session, name, said, player, recent, gate);
         turn.pending = reply;
         session.turns.put(uid, turn);
         long asked = System.currentTimeMillis();
+        int epochAsked = epoch(guildId).get();
+        AtomicInteger spoken = new AtomicInteger();
+        AtomicBoolean dropped = new AtomicBoolean();
+        // the reply streams in a sentence at a time, and each is spoken as it arrives
+        gate.open(part ->
+        {
+            if (dropped.get())
+                return;
+            // the first sentence closes the turn: once the bot is talking,
+            // more from them is a new line, not part of this one
+            if (spoken.get() == 0)
+            {
+                if (!session.turns.remove(uid, turn))
+                {
+                    dropped.set(true); // they kept talking; the longer turn gets the answer
+                    return;
+                }
+                LOG.info("LLM first sentence in {} ms", System.currentTimeMillis() - asked);
+            }
+            session.lastSpoke = System.currentTimeMillis();
+            say(guildId, part, spoken.getAndIncrement() == 0 ? heardAt : 0, epochAsked);
+        });
         reply.whenCompleteAsync((d, e) ->
         {
-            // superseded: they said more, and the longer turn gets the answer
-            if (!session.turns.remove(uid, turn))
+            boolean streamed = spoken.get() > 0 && !dropped.get();
+            // superseded before it spoke: they said more, and the longer turn gets the answer
+            if (!streamed && !session.turns.remove(uid, turn))
                 return;
             if (e != null)
             {
                 LOG.warn("LLM request failed", e);
-                speak(guild, "Sorry, my brain isn't responding right now.");
+                if (!streamed)
+                    speak(guild, "Sorry, my brain isn't responding right now.");
                 return;
             }
             LOG.info("LLM {} ms: {} [{}] {}", System.currentTimeMillis() - asked, d.action, d.query, d.reply);
+            if (streamed)
+            {
+                // already spoken; just remember it for the router and follow-ups
+                session.add(BOT_NAME, LlmClient.forSpeech(d.reply));
+                session.lastSpoke = System.currentTimeMillis();
+                return;
+            }
             runDecision(guild, member, session, d.action, d.query, LlmClient.forSpeech(d.reply), heardAt);
         }, llmCalls);
+    }
+
+    /**
+     * Holds a streamed reply's sentences until it's known the line was chat
+     * (the LLM can start before the router has decided), then passes them on.
+     */
+    private static class SpeechGate implements Consumer<String>
+    {
+        private final List<String> held = new ArrayList<>();
+        private Consumer<String> sink;
+        private boolean closed;
+
+        @Override
+        public synchronized void accept(String sentence)
+        {
+            if (closed)
+                return;
+            if (sink == null)
+                held.add(sentence);
+            else
+                sink.accept(sentence);
+        }
+
+        synchronized void open(Consumer<String> sink)
+        {
+            this.sink = sink;
+            held.forEach(sink);
+            held.clear();
+        }
+
+        synchronized void close()
+        {
+            closed = true;
+            held.clear();
+        }
     }
 
     /** Just the bot's name and then nothing: answer it, unless they've started saying more. */
@@ -534,7 +645,8 @@ public class VoiceManager
         speak(guild, "Yes?");
     }
 
-    private CompletableFuture<LlmClient.Decision> askLlm(Session session, String name, String text, String player, List<String> recent)
+    private CompletableFuture<LlmClient.Decision> askLlm(Session session, String name, String text, String player, List<String> recent,
+            Consumer<String> onSentence)
     {
         if (session.conversation == null)
             return null;
@@ -542,7 +654,7 @@ public class VoiceManager
         List<String> before = recent.subList(0, Math.max(0, recent.size() - 1));
         String context = "Player: " + player
                 + (before.isEmpty() ? "" : " Recent conversation in the channel:\n" + String.join("\n", before));
-        return session.conversation.decide(name, text, context);
+        return session.conversation.decide(name, text, context, onSentence);
     }
 
     /** Acts on what the chat LLM (or the keyword fallback) decided. */

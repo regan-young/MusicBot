@@ -14,41 +14,80 @@
 package com.jagrosh.jmusicbot.voice;
 
 import java.io.ByteArrayOutputStream;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.BiConsumer;
+import java.util.concurrent.ExecutorService;
 import net.dv8tion.jda.api.audio.AudioReceiveHandler;
 import net.dv8tion.jda.api.audio.UserAudio;
 import net.dv8tion.jda.api.entities.User;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Collects each speaker's audio into utterances. Discord stops sending
  * packets shortly after someone stops talking, and quiet frames don't count
- * as speech, so an utterance ends once a user has been silent for
- * {@link #END_SILENCE_MS}. {@link #flushIdle()} is polled to close them.
+ * as speech, so silence is measured from the last loud frame.
+ * {@link #flushIdle()} is polled to close utterances.
+ *
+ * With a {@link SmartTurn} model, a short pause is enough when the model
+ * hears that they've finished (falling intonation, a complete sentence),
+ * and a longer one is allowed when they haven't ("can you, um..."). It's
+ * asked after {@link #CHECK_SILENCE_MS} and again after
+ * {@link #RECHECK_SILENCE_MS}; after {@link #MAX_SILENCE_MS} the utterance
+ * ends anyway. Without the model it ends after {@link #END_SILENCE_MS}.
  */
 public class VoiceListener implements AudioReceiveHandler
 {
+    private static final Logger LOG = LoggerFactory.getLogger(VoiceListener.class);
+
     static final long END_SILENCE_MS = 800;
+    static final long CHECK_SILENCE_MS = 200;
+    static final long RECHECK_SILENCE_MS = 600;
+    static final long MAX_SILENCE_MS = 1500;
+    static final float COMPLETE = 0.5f;
     static final long MIN_SPEECH_MS = 400;
     static final long MAX_UTTERANCE_MS = 20_000;
     // below this RMS a frame is background noise, not speech
     static final double SPEECH_RMS = 500;
 
+    /** Receives each finished utterance. */
+    public interface Handler
+    {
+        /**
+         * @param wav 16 kHz mono WAV
+         * @param spokeUntil when the speaker went quiet (epoch ms)
+         * @param ending how the end was decided, for the logs
+         */
+        void onUtterance(User user, byte[] wav, long spokeUntil, String ending);
+    }
+
     private static class Utterance
     {
         final ByteArrayOutputStream pcm = new ByteArrayOutputStream();
         long lastSpeech;
+        int speechEnd; // bytes of pcm up to the last loud frame
         long speechMs;
+        // the smart-turn checks done for the current pause (0, 1 or 2), and
+        // whether one is running
+        int checks;
+        boolean checking;
     }
 
     private final Map<User, Utterance> active = new ConcurrentHashMap<>();
-    private final BiConsumer<User, byte[]> onUtterance;
+    private final Handler handler;
+    private final SmartTurn smartTurn;
+    private final ExecutorService checker;
 
-    /** @param onUtterance receives the speaker and a 16 kHz mono WAV */
-    public VoiceListener(BiConsumer<User, byte[]> onUtterance)
+    /**
+     * @param smartTurn the end-of-turn model, or null to use a fixed silence
+     * @param checker runs the model, off the polling thread
+     */
+    public VoiceListener(Handler handler, SmartTurn smartTurn, ExecutorService checker)
     {
-        this.onUtterance = onUtterance;
+        this.handler = handler;
+        this.smartTurn = smartTurn;
+        this.checker = checker;
     }
 
     @Override
@@ -81,11 +120,13 @@ public class VoiceListener implements AudioReceiveHandler
             if (speech)
             {
                 u.lastSpeech = now;
+                u.speechEnd = u.pcm.size();
                 u.speechMs += VoiceAudio.durationMs(frame.length);
+                u.checks = 0; // a new pause will need new checks
             }
         }
         if (VoiceAudio.durationMs(u.pcm.size()) >= MAX_UTTERANCE_MS)
-            finish(user);
+            finish(user, u, "max length");
     }
 
     /** Whether this user is mid-utterance right now. */
@@ -94,28 +135,89 @@ public class VoiceListener implements AudioReceiveHandler
         return active.containsKey(user);
     }
 
-    /** Ends utterances whose speaker has gone quiet. Call every ~100 ms. */
+    /** Ends utterances whose speaker has finished. Call every ~100 ms. */
     public void flushIdle()
     {
         long now = System.currentTimeMillis();
         for (Map.Entry<User, Utterance> e : active.entrySet())
-            if (now - e.getValue().lastSpeech >= END_SILENCE_MS)
-                finish(e.getKey());
+        {
+            User user = e.getKey();
+            Utterance u = e.getValue();
+            byte[] pcm;
+            long silence, mark;
+            synchronized (u)
+            {
+                silence = now - u.lastSpeech;
+                if (smartTurn == null)
+                {
+                    if (silence >= END_SILENCE_MS)
+                        finish(user, u, "silence " + silence + " ms");
+                    continue;
+                }
+                if (silence >= MAX_SILENCE_MS)
+                {
+                    finish(user, u, "silence " + silence + " ms");
+                    continue;
+                }
+                long due = u.checks == 0 ? CHECK_SILENCE_MS : RECHECK_SILENCE_MS;
+                if (u.checking || u.checks >= 2 || silence < due || u.speechMs < MIN_SPEECH_MS)
+                    continue;
+                u.checking = true;
+                mark = u.lastSpeech;
+                pcm = withSilence(u.pcm.toByteArray(), u.speechEnd, silence);
+            }
+            checker.submit(() -> check(user, u, pcm, mark, silence));
+        }
     }
 
-    private void finish(User user)
+    private void check(User user, Utterance u, byte[] pcm, long mark, long silence)
     {
-        Utterance u = active.remove(user);
-        if (u == null)
+        float p;
+        try
+        {
+            p = smartTurn.probability(pcm);
+        }
+        catch (Exception e)
+        {
+            LOG.warn("Smart Turn failed; waiting for silence instead", e);
+            p = 0;
+        }
+        synchronized (u)
+        {
+            u.checking = false;
+            if (u.lastSpeech != mark)
+                return; // they started talking again; the next pause gets fresh checks
+            u.checks++;
+            if (p >= COMPLETE)
+                finish(user, u, String.format("smart turn %.2f after %d ms", p, silence));
+        }
+    }
+
+    /**
+     * The model expects the pause itself at the end of the audio, but Discord
+     * sends only a few quiet frames once someone stops talking. Keeps those
+     * and pads with zeros to the length of the pause so far.
+     */
+    static byte[] withSilence(byte[] pcm, int speechEnd, long silenceMs)
+    {
+        int length = Math.max(pcm.length, speechEnd + (int) (silenceMs * SmartTurn.RATE / 1000) * 2);
+        return Arrays.copyOf(pcm, length);
+    }
+
+    private void finish(User user, Utterance u, String ending)
+    {
+        // remove(key, value): only the utterance this decision was about
+        if (!active.remove(user, u))
             return;
         byte[] pcm;
-        long speechMs;
+        long speechMs, spokeUntil;
         synchronized (u)
         {
             pcm = u.pcm.toByteArray();
             speechMs = u.speechMs;
+            spokeUntil = u.lastSpeech;
         }
         if (speechMs >= MIN_SPEECH_MS)
-            onUtterance.accept(user, VoiceAudio.toWav(pcm));
+            handler.onUtterance(user, VoiceAudio.toWav(pcm), spokeUntil, ending);
     }
 }

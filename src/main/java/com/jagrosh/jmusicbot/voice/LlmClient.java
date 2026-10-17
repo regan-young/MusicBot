@@ -14,6 +14,7 @@
 package com.jagrosh.jmusicbot.voice;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -24,6 +25,12 @@ import java.util.Deque;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -60,6 +67,13 @@ public class LlmClient
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
+    // reading a streamed answer blocks, so it gets its own threads
+    private final ExecutorService readers = Executors.newCachedThreadPool(r ->
+    {
+        Thread t = new Thread(r, "llm-stream");
+        t.setDaemon(true);
+        return t;
+    });
     private final String baseUrl, apiKey, model, systemPrompt;
     private final int maxTokens;
     private final boolean openRouter;
@@ -89,12 +103,20 @@ public class LlmClient
     {
         public final VoiceCommand.Type action;
         public final String query, reply;
+        /** How many sentences of the reply were already spoken while it streamed in. */
+        public final int streamed;
 
         Decision(VoiceCommand.Type action, String query, String reply)
+        {
+            this(action, query, reply, 0);
+        }
+
+        Decision(VoiceCommand.Type action, String query, String reply, int streamed)
         {
             this.action = action;
             this.query = query;
             this.reply = reply;
+            this.streamed = streamed;
         }
     }
 
@@ -104,12 +126,15 @@ public class LlmClient
 
         /**
          * Classifies what a speaker said and writes the reply, keeping both in
-         * the history. Cancelling the returned future aborts the request and
-         * leaves the history untouched, so a reply nobody will hear (they kept
-         * talking, or it turned out to be a command) isn't remembered.
+         * the history. The answer streams in, and each sentence of a chat
+         * reply goes to onSentence as soon as it's written. Cancelling the
+         * returned future aborts the request and leaves the history
+         * untouched, so a reply nobody will hear (they kept talking, or it
+         * turned out to be a command) isn't remembered.
          * @param context a line describing the player state ("Now playing: ...")
+         * @param onSentence receives spoken sentences as they arrive, or null to wait for the whole answer
          */
-        public CompletableFuture<Decision> decide(String speaker, String text, String context)
+        public CompletableFuture<Decision> decide(String speaker, String text, String context, Consumer<String> onSentence)
         {
             JSONObject user = new JSONObject().put("role", "user").put("content", speaker + ": " + text);
             JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", systemPrompt));
@@ -123,6 +148,7 @@ public class LlmClient
             JSONObject body = new JSONObject()
                     .put("model", model)
                     .put("max_tokens", maxTokens)
+                    .put("stream", true)
                     .put("response_format", new JSONObject().put("type", "json_object"))
                     .put("messages", messages);
             if (openRouter)
@@ -140,30 +166,70 @@ public class LlmClient
                     .header("X-Title", "Gunna bot")
                     .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                     .build();
-            CompletableFuture<HttpResponse<String>> call = http.sendAsync(req, HttpResponse.BodyHandlers.ofString());
-            CompletableFuture<Decision> result = call.thenApply(res ->
+            AtomicReference<Stream<String>> stream = new AtomicReference<>();
+            CompletableFuture<HttpResponse<Stream<String>>> call = http.sendAsync(req, HttpResponse.BodyHandlers.ofLines());
+            CompletableFuture<Decision> result = call.thenApplyAsync(res ->
             {
-                if (res.statusCode() != 200)
-                    throw new CompletionException(new IOException("LLM failed: HTTP " + res.statusCode() + " " + res.body()));
-                JSONArray choices = new JSONObject(res.body()).optJSONArray("choices");
-                String content = choices == null || choices.isEmpty() ? ""
-                        : choices.getJSONObject(0).getJSONObject("message").optString("content", "").trim();
-                synchronized (this)
+                stream.set(res.body());
+                try (Stream<String> lines = res.body())
                 {
-                    history.add(user);
-                    history.add(new JSONObject().put("role", "assistant").put("content", content));
-                    while (history.size() > HISTORY_MESSAGES)
-                        history.removeFirst();
+                    if (res.statusCode() != 200)
+                        throw new IOException("LLM failed: HTTP " + res.statusCode() + " "
+                                + lines.collect(Collectors.joining(" ")));
+                    ReplyStream reply = new ReplyStream(onSentence);
+                    readEvents(lines, reply);
+                    reply.finish();
+                    String content = reply.content().trim();
+                    synchronized (this)
+                    {
+                        history.add(user);
+                        history.add(new JSONObject().put("role", "assistant").put("content", content));
+                        while (history.size() > HISTORY_MESSAGES)
+                            history.removeFirst();
+                    }
+                    Decision d = parseDecision(content);
+                    return new Decision(d.action, d.query, d.reply, reply.sentences());
                 }
-                return parseDecision(content);
-            });
-            // cancelling the result doesn't reach the HTTP call by itself
+                catch (IOException | UncheckedIOException e)
+                {
+                    throw new CompletionException(e);
+                }
+            }, readers);
+            // cancelling the result doesn't reach the HTTP call by itself;
+            // closing the body stops a response that's already arriving
             result.whenComplete((d, e) ->
             {
-                if (result.isCancelled())
-                    call.cancel(true);
+                if (!result.isCancelled())
+                    return;
+                call.cancel(true);
+                Stream<String> lines = stream.get();
+                if (lines != null)
+                    lines.close();
             });
             return result;
+        }
+    }
+
+    /** Reads server-sent events ("data: {json}") and feeds the text deltas to the reply. */
+    static void readEvents(Stream<String> lines, ReplyStream reply) throws IOException
+    {
+        for (String line : (Iterable<String>) lines::iterator)
+        {
+            // OpenRouter also sends ": OPENROUTER PROCESSING" keep-alive comments
+            if (!line.startsWith("data:"))
+                continue;
+            String data = line.substring(5).trim();
+            if (data.equals("[DONE]"))
+                return;
+            JSONObject event = new JSONObject(data);
+            if (event.has("error"))
+                throw new IOException("LLM failed mid-stream: " + event.get("error"));
+            JSONArray choices = event.optJSONArray("choices");
+            if (choices == null || choices.isEmpty())
+                continue;
+            JSONObject delta = choices.getJSONObject(0).optJSONObject("delta");
+            if (delta != null && delta.opt("content") instanceof String piece)
+                reply.feed(piece);
         }
     }
 
