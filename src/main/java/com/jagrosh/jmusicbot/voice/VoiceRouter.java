@@ -75,7 +75,8 @@ public class VoiceRouter
             + "what to search for. If they "
             + "leave the choice to the bot (\"something you like\", \"surprise me\", \"put some music on\"), or ask by "
             + "mood or loose description (\"something heavy\", \"chill vibes\", \"sad songs\"), use chat "
-            + "instead, so the bot can pick a fitting song\n"
+            + "instead, so the bot can pick a fitting song. A song that played earlier (\"play that again\", \"the last "
+            + "song\", \"the one before\") is chat too, so the bot can look it up\n"
             + "- radio: tune in to a live radio station, or radio of a genre. Use this for any named station (RNZ, ZM, "
             + "The Edge, The Rock, Radio Hauraki, George FM, BBC, Triple J, KEXP, ...) or anything said with radio, "
             + "station or FM. args: station name or genre\n"
@@ -106,6 +107,7 @@ public class VoiceRouter
         { "Regan: bot, where's that meme from\nGunnabot: It's from John Cena's 2021 video about ice cream.\nKFC: holy shit",
           "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
         { "Regan: robot, put on some Fleetwood Mac", "{\"to_bot\": true, \"command\": \"play\", \"args\": \"Fleetwood Mac\"}" },
+        { "Sam: bot, play that last song again", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
         { "Regan: bot, chuck on the BBC World Service", "{\"to_bot\": true, \"command\": \"radio\", \"args\": \"BBC World Service\"}" },
         { "Regan: robot, can you do more songs like this one", "{\"to_bot\": true, \"command\": \"mix\", \"args\": \"\"}" },
         { "Sam: bot, play something you think we'd like", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },

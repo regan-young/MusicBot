@@ -267,6 +267,9 @@ public class VoiceManager
     private final VoiceMemory memory = new VoiceMemory(Path.of("voice-memory.json"));
     private final Reminders reminders;
     private final Coder coder;
+    private final Rice rice;
+    // the persona with about.txt, for answers written outside the conversation (specials)
+    private final String persona;
     private final ZoneId zone;
     // conversations with the bot by text (@mentions), per channel
     private final Map<Long, LlmClient.Conversation> textConversations = new ConcurrentHashMap<>();
@@ -297,7 +300,7 @@ public class VoiceManager
                 : new VoiceApi(url, config.getVoiceSttModel(), config.getVoiceTtsModel(), config.getVoiceTtsVoice());
         String key = config.getLlmKey();
         // the persona, plus what the bot knows about how it works
-        String persona = config.getLlmPrompt() + ABOUT;
+        this.persona = config.getLlmPrompt() + ABOUT;
         this.llm = key == null || key.isBlank() ? null
                 : new LlmClient(config.getLlmApi(), key, config.getLlmModel(), persona, config.getLlmMaxTokens());
         String nsfwModel = config.getNsfwLlmModel();
@@ -316,6 +319,7 @@ public class VoiceManager
                 : new Researcher(config.getLlmApi(), key, config.getResearchModel(), persona);
         this.reminders = new Reminders(Path.of("voice-reminders.json"), ticker, this::remind);
         this.coder = new Coder(config.getCoderApi(), config.getCoderKey(), config.getOwnerId(), ticker);
+        this.rice = new Rice(config.getRiceApi());
         String tz = config.getTimezone();
         this.zone = tz == null || tz.isBlank() ? ZoneId.systemDefault() : ZoneId.of(tz);
     }
@@ -742,6 +746,123 @@ public class VoiceManager
             deliver(guild, session, r.userId, r.name + ", here's your reminder: " + r.text + ".", System.currentTimeMillis());
     }
 
+    // ------------------------------------------------------------------ play history
+
+    // how many earlier tracks the LLM sees; each line carries a URL, so keep it short
+    private static final int HISTORY_IN_CONTEXT = 8;
+
+    /** The tracks played recently, newest first, so "play that again" can find the song and its URL. */
+    static String historyContext(List<AudioHandler.Played> played, long now)
+    {
+        if (played.isEmpty())
+            return "";
+        StringBuilder sb = new StringBuilder(" Played earlier, newest first (the first may be playing now):");
+        for (int i = 0; i < Math.min(HISTORY_IN_CONTEXT, played.size()); i++)
+        {
+            AudioHandler.Played p = played.get(i);
+            long mins = Math.max(0, (now - p.time()) / 60_000);
+            sb.append("\n").append(i + 1).append(". ").append(p.radio() ? "radio station " : "").append(p.title());
+            if (p.author() != null && !p.author().isBlank())
+                sb.append(" by ").append(p.author());
+            sb.append(" (").append(p.requester() == null ? "" : "asked for by " + p.requester() + ", ")
+              .append(mins == 0 ? "just now" : mins + " min ago").append(')');
+            if (p.uri() != null)
+                sb.append(' ').append(p.uri());
+        }
+        return sb.toString();
+    }
+
+    // ------------------------------------------------------------------ specials
+
+    private static final String SPECIALS_TASK = "\n\n%s asked you about this week's supermarket specials: \"%s\". "
+            + "Answer from the data below, from rice, Regan's specials tracker, and nothing else. Prices are NZD. A "
+            + "Clubcard price needs a New World Clubcard. \"2 for $6\" style deals show the price each when you buy "
+            + "that many. Pak'nSave rarely says what the normal price was, so a missing saving doesn't mean a poor "
+            + "deal. The front page is New World's weekly mailer: their headline deals. ";
+    private static final String SPECIALS_SPOKEN = "Reply with only a JSON object: {\"say\": two or three short spoken "
+            + "sentences with the highlights, no lists, URLs or emoji, \"post\": a short Discord message listing the "
+            + "deals that answer the question, one per line with store, item, price and saving, or empty}.";
+    private static final String SPECIALS_TEXT = "Reply with only a JSON object: {\"say\": \"\", \"post\": your answer "
+            + "as a Discord message: a short line, then the deals that answer the question, one per line with store, "
+            + "item, price and saving; markdown welcome, up to about fifteen lines}.";
+
+    /**
+     * Looks up the specials and has the LLM answer from them.
+     * @param spoken whether the answer is for ?chat (a spoken "say" and a posted list) or a text reply
+     * @return the JSON answer's post (text) or say (voice), never null
+     */
+    private CompletableFuture<String> specials(String name, String question, String search, boolean spoken)
+    {
+        return specialsAnswer(name, question, search, spoken).thenApply(o -> spoken ? o.optString("say") : o.optString("post"));
+    }
+
+    private CompletableFuture<org.json.JSONObject> specialsAnswer(String name, String question, String search, boolean spoken)
+    {
+        if (!rice.isEnabled() || llm == null)
+            return CompletableFuture.failedFuture(new IllegalStateException("riceapi isn't set"));
+        return CompletableFuture.supplyAsync(() ->
+        {
+            try
+            {
+                return rice.briefing(search);
+            }
+            catch (Exception e)
+            {
+                throw new java.util.concurrent.CompletionException(e);
+            }
+        }, llmCalls).thenCompose(data -> llm.complete(
+                persona + String.format(SPECIALS_TASK, name, question) + (spoken ? SPECIALS_SPOKEN : SPECIALS_TEXT),
+                data, 900)).thenApply(VoiceManager::parseSpecialsAnswer);
+    }
+
+    /** The {"say", "post"} answer; a model that wrote plain text instead gets it used as both. */
+    static org.json.JSONObject parseSpecialsAnswer(String content)
+    {
+        int start = content.indexOf('{'), end = content.lastIndexOf('}');
+        if (start >= 0 && end > start)
+        {
+            try
+            {
+                org.json.JSONObject o = new org.json.JSONObject(content.substring(start, end + 1));
+                return new org.json.JSONObject().put("say", o.optString("say", "").trim()).put("post", o.optString("post", "").trim());
+            }
+            catch (org.json.JSONException ignored)
+            {
+                // fall through to plain text
+            }
+        }
+        return new org.json.JSONObject().put("say", content.trim()).put("post", content.trim());
+    }
+
+    /** In ?chat: a holding line, then the highlights out loud and the list posted in the channel. */
+    private void specialsInVoice(Guild guild, Session session, User user, String name, String said, String search, String holding,
+            long heardAt)
+    {
+        if (!rice.isEnabled())
+        {
+            speak(guild, "I can't see the specials at the moment, sorry.", heardAt);
+            return;
+        }
+        speak(guild, holding.isEmpty() ? "Let me check the specials." : holding, heardAt);
+        long start = System.currentTimeMillis();
+        specialsAnswer(name, said, search, true).whenComplete((o, e) ->
+        {
+            if (e != null || (o.optString("say").isBlank() && o.optString("post").isBlank()))
+            {
+                LOG.warn("Specials answer failed: {}", said, e);
+                deliver(guild, session, user.getIdLong(), "Sorry " + name + ", I couldn't get the specials just now.",
+                        System.currentTimeMillis());
+                return;
+            }
+            LOG.info("Specials answer in {} ms: {}", System.currentTimeMillis() - start, o.optString("say"));
+            if (!o.optString("post").isBlank())
+                post(session, o.optString("post"));
+            String say = o.optString("say");
+            deliver(guild, session, user.getIdLong(), LlmClient.forSpeech(say.isBlank() ? "I've posted this week's deals." : say),
+                    System.currentTimeMillis());
+        });
+    }
+
     // ------------------------------------------------------------------ self-editing
 
     /**
@@ -894,7 +1015,9 @@ public class VoiceManager
         }
         List<Long> people = new ArrayList<>(List.of(member.getIdLong()));
         message.getMentions().getMembers().forEach(m -> people.add(m.getIdLong()));
-        String context = TEXT_MODE + " " + timeContext() + " Player: " + player + " " + memoryContext(people);
+        String context = TEXT_MODE + " " + timeContext() + " Player: " + player
+                + historyContext(bot.getPlayerManager().setUpHandler(guild).getHistory(), System.currentTimeMillis())
+                + " " + memoryContext(people);
         channel.sendTyping().queue();
         long start = System.currentTimeMillis();
         conversation.decide(name, text, context, null).whenCompleteAsync((d, e) ->
@@ -928,6 +1051,19 @@ public class VoiceManager
                 case RESEARCH:
                     textReply(message, reply.isEmpty() ? "Let me look into that." : reply);
                     researchForText(message, member, text, d.task, context);
+                    return;
+                case SPECIALS:
+                    channel.sendTyping().queue();
+                    specials(name, text, d.query, false).whenComplete((answer, err) ->
+                    {
+                        if (err != null || answer.isBlank())
+                        {
+                            LOG.warn("Specials answer failed: {}", text, err);
+                            textReply(message, "Sorry, I couldn't get the specials just now.");
+                            return;
+                        }
+                        textReply(message, answer);
+                    });
                     return;
                 case INTROSPECT:
                     textReply(message, reply.isEmpty() ? "Let me check my own code." : reply);
@@ -1283,6 +1419,11 @@ public class VoiceManager
                 post(session, d.post);
             if (!d.remember.isEmpty())
                 remember(user, name, d.remember);
+            if (d.action == VoiceCommand.Type.SPECIALS)
+            {
+                specialsInVoice(guild, session, user, name, said, d.query, LlmClient.forSpeech(d.reply), heardAt);
+                return;
+            }
             if (d.action == VoiceCommand.Type.RESEARCH)
             {
                 research(guild, session, user, name, said, d.task, LlmClient.forSpeech(d.reply), player, heardAt);
@@ -1443,6 +1584,7 @@ public class VoiceManager
         List<String> before = recent.subList(0, Math.max(0, recent.size() - 1));
         Guild guild = session.channel instanceof net.dv8tion.jda.api.entities.channel.middleman.GuildChannel gc ? gc.getGuild() : null;
         String context = timeContext() + " Player: " + player
+                + (guild == null ? "" : historyContext(bot.getPlayerManager().setUpHandler(guild).getHistory(), System.currentTimeMillis()))
                 + (guild == null ? "" : " " + memoryContext(peopleInVoice(guild)))
                 + (before.isEmpty() ? "" : " Recent conversation in the channel:\n" + String.join("\n", before));
         return conversation.decide(name, text, context, onSentence);

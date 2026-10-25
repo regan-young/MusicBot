@@ -27,6 +27,9 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -63,6 +66,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private final VoiceSpeaker speaker;
     private final long guildId;
     
+    /** A track that started playing, so people can ask for it again later ("play that again"). */
+    public record Played(String title, String author, String uri, String requester, boolean radio, long time) {}
+    private static final int HISTORY = 20;
+    private final Deque<Played> history = new ArrayDeque<>(); // newest first
+
     private boolean karaoke;
     private AudioFrame lastFrame;
     private AbstractQueue<QueuedTrack> queue;
@@ -270,10 +278,37 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public void onTrackStart(AudioPlayer player, AudioTrack track) 
     {
         votes.clear();
+        remember(track);
         manager.getBot().getNowplayingHandler().onTrackUpdate(manager.getBot().getJDA().getGuildById(guildId), track);
     }
 
     
+    private void remember(AudioTrack track)
+    {
+        String label = manager.getBot().getRadioMetadata().getLabel(track);
+        RequestMetadata rm = track.getUserData(RequestMetadata.class);
+        String requester = rm == null || rm.user == null ? null : rm.user.username;
+        Played played = new Played(label != null ? label : track.getInfo().title, label != null ? null : track.getInfo().author,
+                track.getInfo().uri, requester, label != null, System.currentTimeMillis());
+        synchronized (history)
+        {
+            // a repeated track (repeat mode) is one entry, moved to the front
+            history.removeIf(p -> p.uri() != null && p.uri().equals(played.uri()));
+            history.addFirst(played);
+            while (history.size() > HISTORY)
+                history.removeLast();
+        }
+    }
+
+    /** What's played in this guild since the bot started, newest first (the first may be playing now). */
+    public List<Played> getHistory()
+    {
+        synchronized (history)
+        {
+            return new ArrayList<>(history);
+        }
+    }
+
     // Formatting
     public MessageCreateData getNowPlaying(JDA jda)
     {

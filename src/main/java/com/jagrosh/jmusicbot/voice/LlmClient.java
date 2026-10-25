@@ -50,8 +50,9 @@ public class LlmClient
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
             + "only a JSON object, no other text, with the keys in this order: {\"action\": one of \"play\", \"radio\", "
             + "\"mix\", \"skip\", \"pause\", \"resume\", \"stop\", \"research\", \"remind\", \"cancel_reminders\", "
-            + "\"forget\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
-            + "search for (play, radio and mix), or the person's name (allow_coder and revoke_coder), otherwise empty; "
+            + "\"forget\", \"specials\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
+            + "search for (play, radio and mix), the product they're asking about (specials), or the person's name "
+            + "(allow_coder and revoke_coder), otherwise empty; "
             + "\"task\": for research, remind, introspect and code only, otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
             + "usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
             + "out loud}. "
@@ -65,7 +66,9 @@ public class LlmClient
             + "conversation and what's been playing, and use play with query = \"Artist - Title\"; never search for "
             + "a vague phrase. The same goes for requests by mood, feeling or loose description (\"something heavy\", "
             + "\"chill vibes\", \"sad songs\", \"impending\"): pick one fitting real song and play its \"Artist - Title\" "
-            + "instead of searching the words they said. A named song, artist or album is searched as given. Use chat for everything else, including questions "
+            + "instead of searching the words they said. A named song, artist or album is searched as given. For a song "
+            + "that played earlier (\"play that again\", \"the last song\", \"the one Sam put on\"), use play with query = "
+            + "that song's URL from Played earlier in the context. Use chat for everything else, including questions "
             + "about the current song, which is given in the context. Only choose a music action when they clearly "
             + "ask for it; otherwise chat. For music actions keep reply to a few words, like \"Skipping.\" "
             + "Use research when a good answer needs information you'd have to look up (news, sport results, "
@@ -87,6 +90,9 @@ public class LlmClient
             + "anything sensitive (health, money, passwords, addresses). Use forget when they ask you to forget what "
             + "you know about them. What you already remember about people is in the context; use it naturally, "
             + "without reciting it. "
+            + "Use specials when they ask about supermarket or grocery specials, deals or what's cheap this week "
+            + "(Pak'nSave, New World, Woolworths, or New World's mailer): query = the product they're after, or empty "
+            + "for the best deals overall, and reply = a short holding line; the deals are looked up for you. "
             + "Use introspect when they ask how you work inside, how you were built or why you behave a certain way, "
             + "and a precise answer needs your own source code (what you know about yourself is only a summary): "
             + "task = the question, self-contained, and reply = a short holding line (\"Let me check my own code.\"). "
@@ -109,7 +115,7 @@ public class LlmClient
                     .put("properties", new JSONObject()
                             .put("action", new JSONObject().put("type", "string").put("enum", new JSONArray()
                                     .put("play").put("radio").put("mix").put("skip").put("pause").put("resume").put("stop")
-                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("introspect").put("code")
+                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("specials").put("introspect").put("code")
                                     .put("allow_coder").put("revoke_coder").put("list_coders").put("chat")))
                             .put("query", new JSONObject().put("type", "string"))
                             .put("task", new JSONObject().put("type", "string"))
@@ -190,7 +196,7 @@ public class LlmClient
     {
         public final VoiceCommand.Type action;
         /**
-         * query: a music search, or a person's name for the coder whitelist;
+         * query: a music search, the product asked about for specials, or a person's name for the coder whitelist;
          * task: what to research, the reminder, a question about the bot's own code, or the change to make to it;
          * remember: a fact about the speaker to keep; post: text for the Discord channel
          */
@@ -331,6 +337,42 @@ public class LlmClient
         }
     }
 
+    /**
+     * One request outside the conversation, with no history and no actions:
+     * for writing an answer from data the bot fetched (the specials).
+     * @return the model's whole answer
+     */
+    public CompletableFuture<String> complete(String system, String user, int maxTokens)
+    {
+        JSONObject body = new JSONObject()
+                .put("model", model)
+                .put("max_tokens", maxTokens)
+                .put("messages", new JSONArray()
+                        .put(new JSONObject().put("role", "system").put("content", system))
+                        .put(new JSONObject().put("role", "user").put("content", user)));
+        if (openRouter)
+        {
+            body.put("response_format", new JSONObject().put("type", "json_object"));
+            body.put("reasoning", new JSONObject().put("enabled", false));
+            body.put("provider", new JSONObject().put("sort", "latency"));
+        }
+        HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + "/chat/completions"))
+                .timeout(Duration.ofSeconds(45))
+                .header("Authorization", "Bearer " + apiKey)
+                .header("Content-Type", "application/json")
+                .header("X-Title", "Gunna bot")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        return http.sendAsync(req, HttpResponse.BodyHandlers.ofString()).thenApply(res ->
+        {
+            if (res.statusCode() != 200)
+                throw new CompletionException(new IOException("LLM failed: HTTP " + res.statusCode() + " " + res.body()));
+            JSONArray choices = new JSONObject(res.body()).optJSONArray("choices");
+            return choices == null || choices.isEmpty() ? ""
+                    : choices.getJSONObject(0).getJSONObject("message").optString("content", "").trim();
+        });
+    }
+
     /** Reads server-sent events ("data: {json}") and feeds the text deltas to the reply. */
     static void readEvents(Stream<String> lines, ReplyStream reply) throws IOException
     {
@@ -398,6 +440,7 @@ public class LlmClient
             case "remind": action = task.isEmpty() || minutes <= 0 ? VoiceCommand.Type.CHAT : VoiceCommand.Type.REMIND; break;
             case "cancel_reminders": action = VoiceCommand.Type.CANCEL_REMINDERS; break;
             case "forget": action = VoiceCommand.Type.FORGET; break;
+            case "specials": action = VoiceCommand.Type.SPECIALS; break;
             case "introspect": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.INTROSPECT; break;
             case "code":   action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.CODE; break;
             case "allow_coder":  action = VoiceCommand.Type.ALLOW_CODER; break;

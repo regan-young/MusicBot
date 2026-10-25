@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
 public final class VoiceCommand
 {
     // RADIO, MIX and RESEARCH only come from the LLM; keyword parsing doesn't produce them
-    public enum Type { PLAY, RADIO, MIX, SKIP, PAUSE, RESUME, STOP, NOW_PLAYING, RESEARCH, REMIND, CANCEL_REMINDERS, FORGET, INTROSPECT, CODE, ALLOW_CODER, REVOKE_CODER,
+    public enum Type { PLAY, RADIO, MIX, SKIP, PAUSE, RESUME, STOP, NOW_PLAYING, RESEARCH, REMIND, CANCEL_REMINDERS, FORGET, SPECIALS, INTROSPECT, CODE, ALLOW_CODER, REVOKE_CODER,
         LIST_CODERS, CHAT }
 
     public final Type type;
