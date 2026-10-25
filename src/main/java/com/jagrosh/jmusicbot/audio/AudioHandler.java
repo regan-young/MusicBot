@@ -63,6 +63,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private final VoiceSpeaker speaker;
     private final long guildId;
     
+    private boolean karaoke;
     private AudioFrame lastFrame;
     private AbstractQueue<QueuedTrack> queue;
 
@@ -169,6 +170,18 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         manager.getBot().getSettingsManager().getSettings(guildId).setVolume(volume);
         audioPlayer.setVolume(scaledVolume(volume, manager.getBot().getConfig().getMusicGain()));
+    }
+
+    public boolean isKaraoke()
+    {
+        return karaoke;
+    }
+
+    /** Strips the vocals from what is playing now and from every song after it. */
+    public void setKaraoke(boolean on)
+    {
+        karaoke = on;
+        audioPlayer.setFilterFactory(on ? KaraokeFilter.FACTORY : null);
     }
 
     static int scaledVolume(int volume, int gainPercent)
