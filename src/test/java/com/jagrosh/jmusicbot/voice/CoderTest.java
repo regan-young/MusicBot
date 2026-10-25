@@ -128,5 +128,16 @@ public class CoderTest
         assertEquals("Sam", a.query);
         assertEquals(Type.REVOKE_CODER, LlmClient.parseDecision("{\"action\":\"revoke_coder\",\"query\":\"Sam\"}").action);
         assertEquals(Type.LIST_CODERS, LlmClient.parseDecision("{\"action\":\"list_coders\"}").action);
+        LlmClient.Decision i = LlmClient.parseDecision("{\"action\":\"introspect\",\"task\":\"How do you decide when "
+                + "someone is talking to you?\",\"reply\":\"Let me check my own code.\"}");
+        assertEquals(Type.INTROSPECT, i.action);
+        assertEquals(Type.CHAT, LlmClient.parseDecision("{\"action\":\"introspect\",\"task\":\"\"}").action);
+    }
+
+    @Test
+    public void aboutIsInThePersona()
+    {
+        assertTrue(VoiceManager.ABOUT.contains("github.com/regan-young/MusicBot"));
+        assertTrue(VoiceManager.ABOUT.startsWith("\n\n"));
     }
 }

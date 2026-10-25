@@ -50,9 +50,9 @@ public class LlmClient
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
             + "only a JSON object, no other text, with the keys in this order: {\"action\": one of \"play\", \"radio\", "
             + "\"mix\", \"skip\", \"pause\", \"resume\", \"stop\", \"research\", \"remind\", \"cancel_reminders\", "
-            + "\"forget\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
+            + "\"forget\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
             + "search for (play, radio and mix), or the person's name (allow_coder and revoke_coder), otherwise empty; "
-            + "\"task\": for research, remind and code only, otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
+            + "\"task\": for research, remind, introspect and code only, otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
             + "usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
             + "out loud}. "
             + "Use play when they want a song, artist or album played or queued (query = what to search YouTube for), "
@@ -85,6 +85,10 @@ public class LlmClient
             + "anything sensitive (health, money, passwords, addresses). Use forget when they ask you to forget what "
             + "you know about them. What you already remember about people is in the context; use it naturally, "
             + "without reciting it. "
+            + "Use introspect when they ask how you work inside, how you were built or why you behave a certain way, "
+            + "and a precise answer needs your own source code (what you know about yourself is only a summary): "
+            + "task = the question, self-contained, and reply = a short holding line (\"Let me check my own code.\"). "
+            + "Questions about what you can do, you just answer. "
             + "You can change your own code. Use code when they ask for a change to you, the bot: a new feature or "
             + "command, different behaviour, or a fix for something you got wrong or that's broken (not a music "
             + "request, and not a question about how you work). Then task = a short, self-contained description of the "
@@ -103,7 +107,7 @@ public class LlmClient
                     .put("properties", new JSONObject()
                             .put("action", new JSONObject().put("type", "string").put("enum", new JSONArray()
                                     .put("play").put("radio").put("mix").put("skip").put("pause").put("resume").put("stop")
-                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("code")
+                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("introspect").put("code")
                                     .put("allow_coder").put("revoke_coder").put("list_coders").put("chat")))
                             .put("query", new JSONObject().put("type", "string"))
                             .put("task", new JSONObject().put("type", "string"))
@@ -185,7 +189,7 @@ public class LlmClient
         public final VoiceCommand.Type action;
         /**
          * query: a music search, or a person's name for the coder whitelist;
-         * task: what to research, the reminder, or the change to make to the bot;
+         * task: what to research, the reminder, a question about the bot's own code, or the change to make to it;
          * remember: a fact about the speaker to keep; post: text for the Discord channel
          */
         public final String query, task, remember, post, reply;
@@ -392,6 +396,7 @@ public class LlmClient
             case "remind": action = task.isEmpty() || minutes <= 0 ? VoiceCommand.Type.CHAT : VoiceCommand.Type.REMIND; break;
             case "cancel_reminders": action = VoiceCommand.Type.CANCEL_REMINDERS; break;
             case "forget": action = VoiceCommand.Type.FORGET; break;
+            case "introspect": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.INTROSPECT; break;
             case "code":   action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.CODE; break;
             case "allow_coder":  action = VoiceCommand.Type.ALLOW_CODER; break;
             case "revoke_coder": action = VoiceCommand.Type.REVOKE_CODER; break;

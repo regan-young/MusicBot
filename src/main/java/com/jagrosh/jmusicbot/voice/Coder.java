@@ -45,6 +45,9 @@ import org.slf4j.LoggerFactory;
  *
  * The owner is always allowed and is the only one who can change the
  * whitelist, which is kept in coders.json.
+ *
+ * Anyone can ask how the bot works ({@link #ask}): the sidecar answers from
+ * the source code with Claude Code's read-only tools.
  */
 public class Coder
 {
@@ -53,6 +56,9 @@ public class Coder
     static final Path WHITELIST = Path.of("coders.json");
     static final Path RESTART = Path.of("restart.json");
     private static final long POLL_SECONDS = 15;
+    // answers are for a live conversation, so they're checked on often
+    private static final long ASK_POLL_MS = 3000;
+    private static final long ASK_TIMEOUT_MS = 6 * 60_000;
     // a restart note older than this is from some other restart, not a deploy
     private static final long RESTART_MAX_AGE_MS = 30 * 60_000;
 
@@ -317,6 +323,59 @@ public class Coder
                 break;
             default: // queued, running, testing, pushing
         }
+    }
+
+    /**
+     * Asks the sidecar a question about the bot's own code, answered from
+     * the source with read-only tools.
+     * @param spoken whether the answer will be said out loud (short and plain) or posted
+     * @return the answer, in the bot's voice
+     */
+    public java.util.concurrent.CompletableFuture<String> ask(String question, String requester, boolean spoken)
+    {
+        java.util.concurrent.CompletableFuture<String> answer = new java.util.concurrent.CompletableFuture<>();
+        if (!isEnabled())
+        {
+            answer.completeExceptionally(new IllegalStateException("the coder isn't set up"));
+            return answer;
+        }
+        String id;
+        try
+        {
+            id = call("POST", "/asks", new JSONObject().put("question", question).put("requester", requester)
+                    .put("spoken", spoken)).getString("id");
+        }
+        catch (Exception e)
+        {
+            answer.completeExceptionally(e);
+            return answer;
+        }
+        long start = System.currentTimeMillis();
+        AtomicReference<ScheduledFuture<?>> poll = new AtomicReference<>();
+        poll.set(ticker.scheduleWithFixedDelay(() ->
+        {
+            try
+            {
+                JSONObject a = call("GET", "/asks/" + id, null);
+                switch (a.optString("state"))
+                {
+                    case "done" -> answer.complete(a.optString("answer", "").trim());
+                    case "failed" -> answer.completeExceptionally(new IOException(a.optString("error")));
+                    default ->
+                    {
+                        if (System.currentTimeMillis() - start > ASK_TIMEOUT_MS)
+                            answer.completeExceptionally(new IOException("no answer after " + ASK_TIMEOUT_MS / 1000 + " s"));
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                LOG.debug("Ask poll failed for {}", id, e);
+            }
+            if (answer.isDone())
+                stop(poll);
+        }, ASK_POLL_MS, ASK_POLL_MS, TimeUnit.MILLISECONDS));
+        return answer;
     }
 
     private static void stop(AtomicReference<ScheduledFuture<?>> poll)

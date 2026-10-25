@@ -89,6 +89,20 @@ public class VoiceManager
     // coming back through someone's speakers and mic
     private static final long ECHO_MS = 15_000;
     private static final Path FEEDBACK = Path.of("voice-feedback.jsonl");
+    // the bot's description of itself (src/main/resources/about.txt), added to every persona
+    static final String ABOUT = loadAbout();
+
+    private static String loadAbout()
+    {
+        try (var in = VoiceManager.class.getResourceAsStream("/about.txt"))
+        {
+            return in == null ? "" : "\n\n" + new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+        }
+        catch (java.io.IOException e)
+        {
+            return "";
+        }
+    }
 
     private static class Line
     {
@@ -282,12 +296,14 @@ public class VoiceManager
         this.api = url == null || url.isBlank() ? null
                 : new VoiceApi(url, config.getVoiceSttModel(), config.getVoiceTtsModel(), config.getVoiceTtsVoice());
         String key = config.getLlmKey();
+        // the persona, plus what the bot knows about how it works
+        String persona = config.getLlmPrompt() + ABOUT;
         this.llm = key == null || key.isBlank() ? null
-                : new LlmClient(config.getLlmApi(), key, config.getLlmModel(), config.getLlmPrompt(), config.getLlmMaxTokens());
+                : new LlmClient(config.getLlmApi(), key, config.getLlmModel(), persona, config.getLlmMaxTokens());
         String nsfwModel = config.getNsfwLlmModel();
         this.nsfwLlm = llm == null || nsfwModel == null || nsfwModel.isBlank() ? null
                 : new LlmClient(config.getNsfwLlmApi(), config.getNsfwLlmKey(), nsfwModel,
-                        config.getNsfwLlmPrompt().isBlank() ? config.getLlmPrompt() : config.getNsfwLlmPrompt(),
+                        (config.getNsfwLlmPrompt().isBlank() ? config.getLlmPrompt() : config.getNsfwLlmPrompt()) + ABOUT,
                         config.getLlmMaxTokens());
         String routerUrl = config.getRouterApi();
         // the router can share the chat LLM's key (both OpenRouter, say)
@@ -297,7 +313,7 @@ public class VoiceManager
         this.smartTurn = loadSmartTurn(config.getSmartTurnModel());
         // web search is an OpenRouter server tool
         this.researcher = llm == null || !config.getLlmApi().contains("openrouter.ai") ? null
-                : new Researcher(config.getLlmApi(), key, config.getResearchModel(), config.getLlmPrompt());
+                : new Researcher(config.getLlmApi(), key, config.getResearchModel(), persona);
         this.reminders = new Reminders(Path.of("voice-reminders.json"), ticker, this::remind);
         this.coder = new Coder(config.getCoderApi(), config.getCoderKey(), config.getOwnerId(), ticker);
         String tz = config.getTimezone();
@@ -728,6 +744,36 @@ public class VoiceManager
 
     // ------------------------------------------------------------------ self-editing
 
+    /**
+     * A question about how the bot works that needs its source code: say a
+     * holding line, have the sidecar read the code, and come back with the
+     * answer when there's a gap in the conversation, as with research.
+     */
+    private void introspect(Guild guild, Session session, Member member, String question, String holding, long heardAt)
+    {
+        if (!coder.isEnabled() || member == null)
+        {
+            speak(guild, "I can't look at my own code at the moment, sorry.", heardAt);
+            return;
+        }
+        speak(guild, holding.isEmpty() ? "Let me check my own code." : holding, heardAt);
+        String name = member.getEffectiveName();
+        long start = System.currentTimeMillis();
+        coder.ask(question, name, true).whenComplete((a, e) ->
+        {
+            long secs = (System.currentTimeMillis() - start) / 1000;
+            if (e != null || a.isBlank())
+            {
+                LOG.warn("Introspection failed after {} s: {}", secs, question, e);
+                deliver(guild, session, member.getIdLong(), "Sorry " + name + ", I couldn't work that out from my code.",
+                        System.currentTimeMillis());
+                return;
+            }
+            LOG.info("Introspection done in {} s: {} -> {}", secs, question, a);
+            deliver(guild, session, member.getIdLong(), LlmClient.forSpeech(a), System.currentTimeMillis());
+        });
+    }
+
     /** Adds to, takes from or describes the list of people who can change the bot's code. */
     private String whitelist(LlmClient.Decision d, Member member, List<Member> candidates)
     {
@@ -882,6 +928,21 @@ public class VoiceManager
                 case RESEARCH:
                     textReply(message, reply.isEmpty() ? "Let me look into that." : reply);
                     researchForText(message, member, text, d.task, context);
+                    return;
+                case INTROSPECT:
+                    textReply(message, reply.isEmpty() ? "Let me check my own code." : reply);
+                    channel.sendTyping().queue();
+                    coder.ask(d.task, name, false).whenComplete((answer, err) ->
+                    {
+                        if (err != null || answer.isBlank())
+                        {
+                            LOG.warn("Introspection failed: {}", d.task, err);
+                            textReply(message, "Sorry, I couldn't work that out from my code just now.");
+                            return;
+                        }
+                        LOG.info("Introspection for {}: {} -> {}", name, d.task, answer.replace('\n', ' '));
+                        textReply(message, answer);
+                    });
                     return;
                 case CODE:
                     textReply(message, coder.request(member, d.task, reply, new Coder.Updates()
@@ -1405,6 +1466,9 @@ public class VoiceManager
             case STOP:   run(guild, member, session, "stop", "", heardAt); break;
             case PAUSE:  run(guild, member, session, "pause", "", heardAt); break;
             case RESUME: run(guild, member, session, "resume", "", heardAt); break;
+            case INTROSPECT:
+                introspect(guild, session, member, d.task, reply, heardAt);
+                break;
             case CODE:
                 speak(guild, coder.request(member, d.task, reply, new Coder.Updates()
                 {

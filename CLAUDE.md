@@ -13,6 +13,7 @@ A JMusicBot fork running in one Discord server (Java 25, JDA 6, lavaplayer, Mave
 - Voice and chat: `voice/`. `VoiceManager` runs `?chat` sessions and text chat; `VoiceRouter` (a small LLM) decides whether a spoken line is for the bot and which command it is; `LlmClient` is the conversational LLM, whose JSON decision format (`ACTIONS`, `DECISION_SCHEMA`, `parseDecision`) the code depends on; `Researcher` does background web research; `Coder` is self-editing (whitelist, the coder sidecar, restarts).
 - Config: every key needs a default in `src/main/resources/reference.conf` (with a comment explaining it) and a field and getter in `BotConfig`. The live config.txt is not in the repo.
 - Radio stations: `RadioCmd` and `RadioMetadata`.
+- `src/main/resources/about.txt` is the bot's description of itself, added to its chat persona. When a change alters what the bot can do or how it behaves, update it to match, and keep it short (it's sent with every message).
 
 ## Conventions
 
