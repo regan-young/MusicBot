@@ -102,6 +102,13 @@ public class VoiceFeaturesTest
     }
 
     @Test
+    public void vagueMusicRequestsGoToTheBrain()
+    {
+        assertTrue(VoiceRouter.SYSTEM.contains("mood or loose description"));
+        assertTrue(LlmClient.ACTIONS.contains("mood, feeling or loose description"));
+    }
+
+    @Test
     public void routesExplicitModeCommands()
     {
         assertEquals("explicit_on", VoiceRouter.parse("{\"to_bot\": true, \"command\": \"explicit_on\", \"args\": \"\"}").command);

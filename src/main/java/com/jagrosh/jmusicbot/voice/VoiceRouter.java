@@ -73,8 +73,9 @@ public class VoiceRouter
             + "2. command: the bot command that fits, from this list:\n"
             + "- play: play or queue a song, artist, album or genre they name (but \"songs like X\" is mix). args: "
             + "what to search for. If they "
-            + "leave the choice to the bot (\"something you like\", \"surprise me\", \"put some music on\"), use chat "
-            + "instead, so the bot can pick\n"
+            + "leave the choice to the bot (\"something you like\", \"surprise me\", \"put some music on\"), or ask by "
+            + "mood or loose description (\"something heavy\", \"chill vibes\", \"sad songs\"), use chat "
+            + "instead, so the bot can pick a fitting song\n"
             + "- radio: tune in to a live radio station, or radio of a genre. Use this for any named station (RNZ, ZM, "
             + "The Edge, The Rock, Radio Hauraki, George FM, BBC, Triple J, KEXP, ...) or anything said with radio, "
             + "station or FM. args: station name or genre\n"
@@ -108,6 +109,7 @@ public class VoiceRouter
         { "Regan: bot, chuck on the BBC World Service", "{\"to_bot\": true, \"command\": \"radio\", \"args\": \"BBC World Service\"}" },
         { "Regan: robot, can you do more songs like this one", "{\"to_bot\": true, \"command\": \"mix\", \"args\": \"\"}" },
         { "Sam: bot, play something you think we'd like", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
+        { "Sam: bot, play something heavy", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
         { "Sam: Gunnabot what's the capital of Peru\nGunnabot: Lima, the city of kings.\nKFC: haha she knows everything",
           "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
         { "Regan: bot, do you know any good podcasts?\nGunnabot: A few. Do you want history or comedy?\nRegan: history please",
