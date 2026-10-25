@@ -252,6 +252,7 @@ public class VoiceManager
     private final Researcher researcher;
     private final VoiceMemory memory = new VoiceMemory(Path.of("voice-memory.json"));
     private final Reminders reminders;
+    private final Coder coder;
     private final ZoneId zone;
     // conversations with the bot by text (@mentions), per channel
     private final Map<Long, LlmClient.Conversation> textConversations = new ConcurrentHashMap<>();
@@ -298,6 +299,7 @@ public class VoiceManager
         this.researcher = llm == null || !config.getLlmApi().contains("openrouter.ai") ? null
                 : new Researcher(config.getLlmApi(), key, config.getResearchModel(), config.getLlmPrompt());
         this.reminders = new Reminders(Path.of("voice-reminders.json"), ticker, this::remind);
+        this.coder = new Coder(config.getCoderApi(), config.getCoderKey(), config.getOwnerId(), ticker);
         String tz = config.getTimezone();
         this.zone = tz == null || tz.isBlank() ? ZoneId.systemDefault() : ZoneId.of(tz);
     }
@@ -724,6 +726,78 @@ public class VoiceManager
             deliver(guild, session, r.userId, r.name + ", here's your reminder: " + r.text + ".", System.currentTimeMillis());
     }
 
+    // ------------------------------------------------------------------ self-editing
+
+    /** Adds to, takes from or describes the list of people who can change the bot's code. */
+    private String whitelist(LlmClient.Decision d, Member member, List<Member> candidates)
+    {
+        if (!coder.isEnabled())
+            return "I can't change my own code: the coder isn't set up.";
+        if (d.action == VoiceCommand.Type.LIST_CODERS)
+            return coder.describeWhitelist();
+        return coder.setAllowed(member, d.query, candidates, d.action == VoiceCommand.Type.ALLOW_CODER);
+    }
+
+    /**
+     * A change is pushed and deploying: tell the channel (and the voice
+     * channel, if ?chat is on), and note where the bot is so the new version
+     * comes back there (see {@link #resumeAfterRestart}).
+     */
+    private void deploying(Guild guild, MessageChannel channel, String summary)
+    {
+        var state = guild.getSelfMember().getVoiceState();
+        long voiceChannel = state == null || state.getChannel() == null ? 0 : state.getChannel().getIdLong();
+        Session session = sessions.get(guild.getIdLong());
+        // ?chat posts in its own channel, so the "I'm back" goes there too
+        MessageChannel text = session != null ? session.channel : channel;
+        Coder.saveRestart(new Coder.Restart(guild.getIdLong(), text.getIdLong(), voiceChannel, session != null, summary));
+        String done = summary.isBlank() ? "Done." : summary;
+        channel.sendMessage("\uD83D\uDEE0\uFE0F " + done + "\n\uD83D\uDE80 Deploying it now. I'll restart and be back in a minute or two.")
+                .setAllowedMentions(List.of())
+                .queue(m -> {}, e -> LOG.warn("Could not post the deploy notice", e));
+        if (session != null)
+            speak(guild, LlmClient.forSpeech(done) + " I'm restarting to put it live. Back in a minute.");
+    }
+
+    /**
+     * After a deploy the bot set off itself: rejoin the voice channel it was
+     * in, start ?chat again if it was on, and say it's back.
+     */
+    public void resumeAfterRestart(net.dv8tion.jda.api.JDA jda)
+    {
+        Coder.Restart r = Coder.takeRestart();
+        if (r == null)
+            return;
+        Guild guild = jda.getGuildById(r.guildId());
+        if (guild == null)
+            return;
+        MessageChannel text = guild.getGuildChannelById(r.textChannelId()) instanceof MessageChannel c ? c : null;
+        var voice = guild.getGuildChannelById(r.voiceChannelId())
+                instanceof net.dv8tion.jda.api.entities.channel.middleman.AudioChannel a ? a : null;
+        LOG.info("Back from a deploy; rejoining {} (?chat {})", voice == null ? "no voice channel" : voice.getName(),
+                r.listening() ? "on" : "off");
+        if (voice != null)
+        {
+            try
+            {
+                bot.getPlayerManager().setUpHandler(guild);
+                guild.getAudioManager().openAudioConnection(voice);
+                if (r.listening() && text != null && isEnabled())
+                    startListening(guild, text, voice);
+                // give the voice connection a moment to come up
+                ticker.schedule(() -> speak(guild, "I'm back, and the update is live."), 4, TimeUnit.SECONDS);
+            }
+            catch (Exception e)
+            {
+                LOG.warn("Could not rejoin {} after the deploy", voice.getName(), e);
+            }
+        }
+        if (text != null)
+            text.sendMessage("\u2705 I'm back with the update" + (r.summary().isBlank() ? "." : ": " + r.summary()))
+                    .setAllowedMentions(List.of())
+                    .queue(m -> {}, e -> LOG.warn("Could not post the back-online notice", e));
+    }
+
     // ------------------------------------------------------------------ text chat
 
     private static final String TEXT_MODE = "This message was typed in the Discord text channel, not spoken. Your "
@@ -808,6 +882,21 @@ public class VoiceManager
                 case RESEARCH:
                     textReply(message, reply.isEmpty() ? "Let me look into that." : reply);
                     researchForText(message, member, text, d.task, context);
+                    return;
+                case CODE:
+                    textReply(message, coder.request(member, d.task, reply, new Coder.Updates()
+                    {
+                        @Override
+                        public void post(String s) { textReply(message, s); }
+
+                        @Override
+                        public void say(String s) {}
+                    }, summary -> deploying(guild, channel, summary)));
+                    return;
+                case ALLOW_CODER:
+                case REVOKE_CODER:
+                case LIST_CODERS:
+                    textReply(message, whitelist(d, member, message.getMentions().getMembers()));
                     return;
                 default:
                     textReply(message, reply);
@@ -1316,6 +1405,31 @@ public class VoiceManager
             case STOP:   run(guild, member, session, "stop", "", heardAt); break;
             case PAUSE:  run(guild, member, session, "pause", "", heardAt); break;
             case RESUME: run(guild, member, session, "resume", "", heardAt); break;
+            case CODE:
+                speak(guild, coder.request(member, d.task, reply, new Coder.Updates()
+                {
+                    @Override
+                    public void post(String s) { VoiceManager.this.post(session, s); }
+
+                    @Override
+                    public void say(String s)
+                    {
+                        if (sessions.get(guild.getIdLong()) == session)
+                            speak(guild, LlmClient.forSpeech(s));
+                    }
+                }, summary -> deploying(guild, session.channel, summary)), heardAt);
+                break;
+            case ALLOW_CODER:
+            case REVOKE_CODER:
+            case LIST_CODERS:
+                List<Member> here = new ArrayList<>();
+                peopleInVoice(guild).forEach(id -> {
+                    Member m = guild.getMemberById(id);
+                    if (m != null)
+                        here.add(m);
+                });
+                speak(guild, whitelist(d, member, here), heardAt);
+                break;
             case NOW_PLAYING:
                 AudioTrack t = bot.getPlayerManager().setUpHandler(guild).getPlayer().getPlayingTrack();
                 speak(guild, t == null ? "Nothing's playing." : "This is " + t.getInfo().title + ".", heardAt);

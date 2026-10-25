@@ -1,0 +1,39 @@
+# The coder sidecar, as its own project so the bot's deploys (which replace
+# the musicbot project) never restart it in the middle of a task. Deployed by
+# hand on the homelab: docker compose -f coder/docker-compose.yml up -d --build
+#
+# /home/regan/musicbot-coder holds:
+#   .env   CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) and CODER_KEY
+#          (the same value as coderkey in the bot's config.txt)
+#   home/  the container's $HOME: .ssh/id_ed25519 (a write deploy key for the
+#          repo), the Maven cache and Claude Code's state
+#   work/  the checkout Claude Code works in
+name: musicbot-coder
+
+services:
+  coder:
+    build: .
+    image: musicbot-coder:latest
+    container_name: musicbot-coder
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file: /home/regan/musicbot-coder/.env
+    volumes:
+      - /home/regan/musicbot-coder/home:/home/coder
+      - /home/regan/musicbot-coder/work:/work
+    # the bot reaches it at http://musicbot-coder:8787; no port is published
+    networks: [musicbot]
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.0.100:3100/loki/api/v1/push"
+        loki-retries: "2"
+        mode: non-blocking
+        max-buffer-size: 4m
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  musicbot:
+    external: true
+    name: musicbot_default

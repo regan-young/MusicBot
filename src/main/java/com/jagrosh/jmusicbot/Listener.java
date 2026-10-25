@@ -51,6 +51,8 @@ public class Listener extends ListenerAdapter
             log.warn(event.getJDA().getInviteUrl(JMusicBot.RECOMMENDED_PERMS));
         }
         credit(event.getJDA());
+        // back from a self-edit deploy: rejoin the voice channel and say so
+        bot.getVoiceManager().resumeAfterRestart(event.getJDA());
         event.getJDA().getGuilds().forEach((guild) -> 
         {
             try
