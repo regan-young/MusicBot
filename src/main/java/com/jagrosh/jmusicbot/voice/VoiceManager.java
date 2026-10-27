@@ -20,6 +20,8 @@ import com.jagrosh.jmusicbot.BotConfig;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.commands.DJCommand;
+import com.jagrosh.jmusicbot.settings.RepeatMode;
+import com.jagrosh.jmusicbot.settings.Settings;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
@@ -1704,6 +1706,15 @@ public class VoiceManager
                 confirm.accept("Okay, I'm off. Catch you later.");
                 leaveAfterGoodbye(guild, System.currentTimeMillis(), 0);
                 return;
+            case "repeat":
+                // ?repeat with no argument toggles between off and all, so say which it will be
+                args = ""; // the router may pass words like "this song"
+                if (client != null)
+                {
+                    Settings settings = client.getSettingsFor(guild);
+                    confirm.accept(settings.getRepeatMode() == RepeatMode.OFF ? "Repeat is on." : "Repeat is off.");
+                }
+                break;
             case "volume":
                 if (!args.matches("\\d{1,3}"))
                 {

@@ -7,6 +7,14 @@ import static org.junit.Assert.*;
 public class VoiceRouterTest
 {
     @Test
+    public void parsesRepeat()
+    {
+        VoiceRouter.Route r = VoiceRouter.parse("{\"to_bot\": true, \"command\": \"repeat\", \"args\": \"\"}");
+        assertTrue(r.toBot);
+        assertEquals("repeat", r.command);
+    }
+
+    @Test
     public void parsesARoute()
     {
         VoiceRouter.Route r = VoiceRouter.parse("{\"to_bot\": true, \"command\": \"radio\", \"args\": \"RNZ National\"}");

@@ -61,7 +61,7 @@ public class VoiceRouter
 
     /** Commands the router may pick. "chat" goes to the conversational LLM, "none" is ignored. */
     static final Set<String> COMMANDS = Set.of("play", "radio", "mix", "skip", "pause", "resume", "stop",
-            "volume", "shuffle", "hush", "not_you", "leave", "explicit_on", "explicit_off", "chat", "none");
+            "volume", "shuffle", "repeat", "hush", "not_you", "leave", "explicit_on", "explicit_off", "chat", "none");
 
     static final String SYSTEM = "You route voice chat for Gunnabot, a music bot in a Discord voice channel with "
             + "several friends. Speech recognition is imperfect: the bot's name may come out as Gunnabot, Gunnerbot, "
@@ -92,6 +92,7 @@ public class VoiceRouter
             + "- volume: change the volume. args: the new number 0-150. The current volume is on the Player line; "
             + "\"up a bit\" is about 20 more, \"down a bit\" about 20 less\n"
             + "- shuffle: shuffle the queue\n"
+            + "- repeat: toggle repeat (\"repeat\", \"repeat this song\", \"play on repeat\", \"loop the queue\")\n"
             + "- hush: the bot should stop talking (\"shut up\", \"that's enough\", \"stop talking\"), not the music\n"
             + "- not_you: they're telling the bot it wasn't being spoken to (\"not you, bot\", \"I wasn't talking to you\", "
             + "\"nobody asked you, clanker\")\n"
@@ -108,6 +109,7 @@ public class VoiceRouter
           "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
         { "Regan: robot, put on some Fleetwood Mac", "{\"to_bot\": true, \"command\": \"play\", \"args\": \"Fleetwood Mac\"}" },
         { "Sam: bot, play that last song again", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
+        { "Sam: bot, put this song on repeat", "{\"to_bot\": true, \"command\": \"repeat\", \"args\": \"\"}" },
         { "Regan: bot, chuck on the BBC World Service", "{\"to_bot\": true, \"command\": \"radio\", \"args\": \"BBC World Service\"}" },
         { "Regan: robot, can you do more songs like this one", "{\"to_bot\": true, \"command\": \"mix\", \"args\": \"\"}" },
         { "Sam: bot, play something you think we'd like", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
