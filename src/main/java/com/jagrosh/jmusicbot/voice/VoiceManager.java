@@ -1404,6 +1404,9 @@ public class VoiceManager
             // superseded before it spoke: they said more, and the longer turn gets the answer
             if (!streamed && !session.turns.remove(uid, turn))
                 return;
+            // ?chat stopped the session, which cancels its requests: not a failure
+            if (e != null && sessions.get(guildId) != session)
+                return;
             if (e != null)
             {
                 LOG.warn("LLM request failed", e);

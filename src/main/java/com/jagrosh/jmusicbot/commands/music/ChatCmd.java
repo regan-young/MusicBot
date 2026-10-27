@@ -45,6 +45,12 @@ public class ChatCmd extends MusicCommand
         }
         if (voice.isListening(event.getGuild().getIdLong()))
         {
+            // "?chat we got a double kill" is talking to the bot, not asking it to stop
+            if (!event.getArgs().isBlank())
+            {
+                voice.replyToText(event.getMessage(), event.getArgs());
+                return;
+            }
             voice.stopListening(event.getGuild());
             event.replySuccess("Stopped listening.");
             voice.speak(event.getGuild(), "Okay, I've stopped listening.");
