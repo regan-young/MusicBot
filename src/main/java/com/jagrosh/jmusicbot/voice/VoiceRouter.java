@@ -23,6 +23,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -126,6 +131,8 @@ public class VoiceRouter
     private final HttpClient http = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(3)).build();
+    // a normal answer takes about a second; past this one is probably stuck
+    private static final long HEDGE_AFTER_MS = 2000;
     private final String baseUrl, apiKey, model;
     private final boolean openRouter;
 
@@ -187,22 +194,84 @@ public class VoiceRouter
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()));
         if (!apiKey.isEmpty())
             req.header("Authorization", "Bearer " + apiKey);
-        HttpResponse<String> res;
-        try
-        {
-            res = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
-        }
-        catch (IOException e)
-        {
-            // the server may have dropped an idle keep-alive connection; retry once
-            res = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
-        }
+        HttpResponse<String> res = send(req.build());
         if (res.statusCode() != 200)
             throw new IOException("Router failed: HTTP " + res.statusCode());
         JSONArray choices = new JSONObject(res.body()).optJSONArray("choices");
         String content = choices == null || choices.isEmpty() ? ""
                 : choices.getJSONObject(0).getJSONObject("message").optString("content", "");
         return parse(content);
+    }
+
+    /**
+     * On OpenRouter, sends a second copy if the first hasn't answered in
+     * HEDGE_AFTER_MS and takes whichever answers first: now and then a host
+     * stalls for 7-9 s on a request it normally answers in one. A local
+     * server gets one request, since a copy would only queue behind it.
+     */
+    private HttpResponse<String> send(HttpRequest request) throws IOException, InterruptedException
+    {
+        CompletableFuture<HttpResponse<String>> first = sendRetrying(request);
+        if (!openRouter)
+            return await(first);
+        try
+        {
+            return first.get(HEDGE_AFTER_MS, TimeUnit.MILLISECONDS);
+        }
+        catch (TimeoutException e)
+        {
+            // still waiting: hedge below
+        }
+        catch (ExecutionException e)
+        {
+            throw asIOException(e);
+        }
+        CompletableFuture<HttpResponse<String>> second = sendRetrying(request);
+        CompletableFuture<HttpResponse<String>> winner = new CompletableFuture<>();
+        AtomicInteger failures = new AtomicInteger();
+        for (CompletableFuture<HttpResponse<String>> f : List.of(first, second))
+            f.whenComplete((r, e) ->
+            {
+                if (e == null)
+                    winner.complete(r);
+                else if (failures.incrementAndGet() == 2)
+                    winner.completeExceptionally(e);
+            });
+        try
+        {
+            return await(winner);
+        }
+        finally
+        {
+            first.cancel(true);
+            second.cancel(true);
+        }
+    }
+
+    private CompletableFuture<HttpResponse<String>> sendRetrying(HttpRequest request)
+    {
+        // the server may have dropped an idle keep-alive connection; retry once
+        return http.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                .exceptionallyCompose(e -> http.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
+    }
+
+    private static HttpResponse<String> await(CompletableFuture<HttpResponse<String>> f) throws IOException, InterruptedException
+    {
+        try
+        {
+            return f.get();
+        }
+        catch (ExecutionException e)
+        {
+            throw asIOException(e);
+        }
+    }
+
+    private static IOException asIOException(ExecutionException e)
+    {
+        Throwable c = e.getCause() instanceof java.util.concurrent.CompletionException ce && ce.getCause() != null
+                ? ce.getCause() : e.getCause();
+        return c instanceof IOException io ? io : new IOException(c);
     }
 
     private static JSONObject message(String role, String content)

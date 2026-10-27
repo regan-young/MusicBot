@@ -19,6 +19,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 
 const PORT = Number(process.env.PORT || 8787);
 const KEY = process.env.CODER_KEY || '';
@@ -31,6 +32,9 @@ const ASK_DIR = process.env.ASK_DIR || '/work/ask';
 const ASK_MODEL = process.env.ASK_MODEL || 'sonnet';
 const ASK_TIMEOUT_MS = 5 * 60_000;
 const MAX_ASKS_WAITING = 3;
+// the bot's recent log, sent with each ask and written into the ask checkout
+const ASK_LOG_FILE = 'runtime-logs/recent.log';
+const MAX_ASK_LOG_CHARS = 512 * 1024;
 const CLAUDE_TIMEOUT_MS = 40 * 60_000;
 const TEST_TIMEOUT_MS = 20 * 60_000;
 const DEPLOY_TIMEOUT_MS = 25 * 60_000;
@@ -112,11 +116,14 @@ function askPrompt(ask) {
   const style = ask.spoken
     ? 'Your answer is spoken aloud by text-to-speech in a Discord voice chat: two to four short, plain sentences, no markdown, lists, code, file names or URLs.'
     : 'Your answer is posted as a Discord reply: up to about eight sentences or a short list; Discord markdown is fine, and you can name a file or class when it helps.';
+  const logs = ask.logs
+    ? `\n\nYour own recent log, oldest line first, is in ${ASK_LOG_FILE} (each voice line logs its STT, router, LLM and TTS times in ms). When the question is about how you're running right now (slow, not hearing people, errors), grep it first, and answer with what it shows: which step is slow or failing, since when, and why, if the code explains it.`
+    : '';
   return `You are Gunnabot, the Discord music bot whose source code is this repository. ${ask.requester} asked you about yourself:
 
 ${ask.question}
 
-Answer from the code: read CLAUDE.md, then find and read the parts that matter. Answer in the first person, as the bot, accurately and without inventing anything; if the code doesn't settle it, say so. Never reveal secrets, tokens or config values. ${style}`;
+Answer from the code: read CLAUDE.md, then find and read the parts that matter.${logs} Answer in the first person, as the bot, accurately and without inventing anything; if the code or log doesn't settle it, say so. Never reveal secrets, tokens or config values. ${style}`;
 }
 
 function changedPaths(porcelain) {
@@ -213,6 +220,11 @@ async function answer(ask) {
   try {
     set({ state: 'running' });
     await freshCheckout(ASK_DIR);
+    // untracked, so the next checkout's clean removes it
+    if (ask.logs) {
+      await mkdir(`${ASK_DIR}/runtime-logs`, { recursive: true });
+      await writeFile(`${ASK_DIR}/${ASK_LOG_FILE}`, ask.logs);
+    }
     log(ask.id, 'answering for', ask.requester, '-', ask.question);
     const claude = await run('claude', ['-p', askPrompt(ask), '--output-format', 'json', '--model', ASK_MODEL,
       '--allowedTools', 'Read,Grep,Glob', '--disallowedTools', 'Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch'],
@@ -229,6 +241,8 @@ async function answer(ask) {
   } catch (e) {
     log(ask.id, 'ask failed:', e.message);
     set({ state: 'failed', error: e.message });
+  } finally {
+    delete ask.logs; // finished asks stay in the map for polling; the log needn't
   }
 }
 
@@ -246,11 +260,11 @@ async function pumpAsks() {
 }
 
 /** Reads a JSON request body, or returns null after sending the error. */
-async function readJson(req, res) {
+async function readJson(req, res, limit = 20_000) {
   let raw = '';
   for await (const chunk of req) {
     raw += chunk;
-    if (raw.length > 20_000) {
+    if (raw.length > limit) {
       send(res, 413, { error: 'too long' });
       return null;
     }
@@ -335,7 +349,7 @@ http
     }
 
     if (req.method === 'POST' && req.url === '/asks') {
-      const body = await readJson(req, res);
+      const body = await readJson(req, res, MAX_ASK_LOG_CHARS + 20_000);
       if (!body) return;
       const question = String(body.question || '').trim();
       if (!question) return send(res, 400, { error: 'question is required' });
@@ -346,6 +360,7 @@ http
         question: question.slice(0, 2000),
         requester: String(body.requester || 'someone').slice(0, 100),
         spoken: body.spoken === true,
+        logs: String(body.logs || '').slice(-MAX_ASK_LOG_CHARS),
         created: Date.now(),
         updated: Date.now(),
       };

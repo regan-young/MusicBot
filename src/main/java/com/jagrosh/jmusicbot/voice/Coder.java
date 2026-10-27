@@ -59,6 +59,8 @@ public class Coder
     // answers are for a live conversation, so they're checked on often
     private static final long ASK_POLL_MS = 3000;
     private static final long ASK_TIMEOUT_MS = 6 * 60_000;
+    // roughly the last hour of a busy voice session; the sidecar takes up to 512 KB
+    private static final int ASK_LOG_CHARS = 400_000;
     // a restart note older than this is from some other restart, not a deploy
     private static final long RESTART_MAX_AGE_MS = 30 * 60_000;
 
@@ -342,8 +344,9 @@ public class Coder
         String id;
         try
         {
+            // the recent log goes along, so "why are you slow" or "what went wrong" can be answered too
             id = call("POST", "/asks", new JSONObject().put("question", question).put("requester", requester)
-                    .put("spoken", spoken)).getString("id");
+                    .put("spoken", spoken).put("logs", RecentLog.text(ASK_LOG_CHARS))).getString("id");
         }
         catch (Exception e)
         {

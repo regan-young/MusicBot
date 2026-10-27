@@ -7,8 +7,12 @@
         </encoder>
     </appender>
 
+    <!-- The last few thousand lines in memory, for introspect questions about how the bot is running -->
+    <appender name="RECENT" class="com.jagrosh.jmusicbot.voice.RecentLog" />
+
     <!-- The root level is overridden at startup by "loglevel" in config.txt -->
     <root level="info">
         <appender-ref ref="STDOUT" />
+        <appender-ref ref="RECENT" />
     </root>
 </configuration>
