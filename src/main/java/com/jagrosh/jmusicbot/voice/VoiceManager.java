@@ -1055,12 +1055,14 @@ public class VoiceManager
             {
                 VoiceRouter.Route route = router.route(List.of(name + ": " + text), false, player,
                         mood == null ? null : mood.spicy(), crude == null ? null : crude.spicy());
-                if (mood != null && (route.command.equals("explicit_on") || route.command.equals("explicit_off")))
+                boolean repeat = VoiceRouter.isRepeat(route.command, route.args, text, mood == null ? null : mood.spicy(),
+                        crude == null ? null : crude.spicy(), -1);
+                if (!repeat && mood != null && (route.command.equals("explicit_on") || route.command.equals("explicit_off")))
                 {
                     textReply(message, setExplicit(guild, channel, route.command.equals("explicit_on")));
                     return;
                 }
-                if (crude != null && (route.command.equals("crude_on") || route.command.equals("crude_off")))
+                if (!repeat && crude != null && (route.command.equals("crude_on") || route.command.equals("crude_off")))
                 {
                     textReply(message, setCrude(guild, channel, route.command.equals("crude_on")));
                     return;
@@ -1436,9 +1438,15 @@ public class VoiceManager
             }
             routerMs = System.currentTimeMillis() - t;
         }
-        boolean toBot = named || (route != null && route.toBot);
+        // a repeat of the last command: talk if it's clearly said to the bot, otherwise not for the bot at all
+        boolean repeat = route != null && route.toBot && VoiceRouter.isRepeat(route.command, route.args, said,
+                session.adultConversation == null ? null : session.mood.spicy(),
+                session.crudeConversation == null ? null : session.crude.spicy(), handler.getVolume());
+        if (repeat)
+            LOG.info("Ignored {} from the router as a repeat: {}", route.command, said);
+        boolean toBot = named || (route != null && route.toBot && (!repeat || followUp));
         // named but the router saw no command: treat it as talk
-        String command = !toBot ? "none" : route == null || !route.toBot ? "chat" : route.command;
+        String command = !toBot ? "none" : route == null || !route.toBot || repeat ? "chat" : route.command;
         if (chat != null && !command.equals("chat"))
         {
             gate.close();

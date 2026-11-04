@@ -121,6 +121,31 @@ public class VoiceFeaturesTest
     }
 
     @Test
+    public void spotsARepeatedCommand()
+    {
+        // real lines the router answered with crude_on
+        assertTrue(VoiceRouter.isRepeat("crude_on", "", "Back second.", null, false, 30));
+        assertTrue(VoiceRouter.isRepeat("crude_on", "", "How did you say that?", null, false, 30));
+        assertTrue(VoiceRouter.isRepeat("crude_on", "", "Yell at Gunner, abuse gunna, roast gunner.", null, false, 30));
+        // already on, even when it's asked for again
+        assertTrue(VoiceRouter.isRepeat("crude_on", "", "crude mode on", null, true, 30));
+        assertFalse(VoiceRouter.isRepeat("crude_on", "", "Um hey gunablot, crude mode on.", null, false, 30));
+        assertFalse(VoiceRouter.isRepeat("crude_on", "", "bot, start swearing at us", null, false, 30));
+        assertFalse(VoiceRouter.isRepeat("crude_on", "", "stop holding back", null, false, 30));
+
+        assertTrue(VoiceRouter.isRepeat("crude_off", "", "tone it down", null, false, 30));
+        assertFalse(VoiceRouter.isRepeat("crude_off", "", "tone it down", null, true, 30));
+        assertTrue(VoiceRouter.isRepeat("explicit_on", "", "go NSFW", true, null, 30));
+        assertFalse(VoiceRouter.isRepeat("explicit_on", "", "go NSFW", false, null, 30));
+        assertTrue(VoiceRouter.isRepeat("explicit_off", "", "back to normal", false, null, 30));
+
+        // "Thousand" came back as the volume just set
+        assertTrue(VoiceRouter.isRepeat("volume", "30", "Thousand.", null, null, 30));
+        assertFalse(VoiceRouter.isRepeat("volume", "50", "make it fifty", null, null, 30));
+        assertFalse(VoiceRouter.isRepeat("skip", "", "skip", null, null, 30));
+    }
+
+    @Test
     public void crudePersonaKeepsItsLimits()
     {
         String prompt = com.typesafe.config.ConfigFactory.parseResources("reference.conf").getString("crudellmprompt");

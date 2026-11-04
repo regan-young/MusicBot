@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -68,7 +69,8 @@ public class VoiceRouter
     static final String CRUDE = "\n\nThe bot has a crude mode, where it swears and roasts people, that people switch on "
             + "and off like a setting; the Crude line says whether it's on. Two more commands here:\n"
             + "- crude_on: they ask for the mode itself to be switched on (\"turn crude mode on\", \"go crude\", "
-            + "\"start swearing at us\", \"stop holding back\"). Asking for one roast or insult is chat, not this\n"
+            + "\"start swearing at us\", \"stop holding back\"), and only when the Crude line says off. Asking for one "
+            + "roast or insult is chat, not this\n"
             + "- crude_off: only when the Crude line says on: they want it off: crude mode off, back to normal, or the "
             + "bot to be nice, stop swearing or tone it down (\"tone it down\" means this only while Crude is on; "
             + "when Crude is off it's the volume, about 20 less)";
@@ -80,7 +82,9 @@ public class VoiceRouter
     static final String SYSTEM = "You route voice chat for Gunnabot, a music bot in a Discord voice channel with "
             + "several friends. Speech recognition is imperfect: the bot's name may come out as Gunnabot, Gunnerbot, "
             + "Annabot, Guttabot, bot, robot or clanker.\n\n"
-            + "Read the recent conversation and decide about the LAST line only:\n"
+            + "Read the recent conversation and decide about the LAST line only. Earlier lines are just context: never "
+            + "repeat a command because someone asked for it earlier or the bot just did it. If the LAST line doesn't "
+            + "itself ask for a command, it's chat or none:\n"
             + "1. to_bot: is the speaker talking TO Gunnabot (asking it something, telling it to do something, or "
             + "answering what it just said)? Friends talking to each other, or talking ABOUT the bot (calling it she, "
             + "her, it or the bot), is false.\n"
@@ -123,6 +127,8 @@ public class VoiceRouter
     // a few worked examples steer a small model far better than more instructions
     private static final String[][] EXAMPLES = {
         { "Sam: did you watch the game last night", "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
+        { "Regan: bot, volume thirty\nGunnabot: Volume 30.\nKFC: thousand", "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
+        { "Sam: bot, play Dreams\nGunnabot: Queuing up Dreams.\nKFC: back in a second", "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
         { "Regan: bot, where's that meme from\nGunnabot: It's from John Cena's 2021 video about ice cream.\nKFC: holy shit",
           "{\"to_bot\": false, \"command\": \"none\", \"args\": \"\"}" },
         { "Regan: robot, put on some Fleetwood Mac", "{\"to_bot\": true, \"command\": \"play\", \"args\": \"Fleetwood Mac\"}" },
@@ -171,6 +177,38 @@ public class VoiceRouter
     public Route route(List<String> conversation, boolean botJustSpoke, String player) throws IOException, InterruptedException
     {
         return route(conversation, botJustSpoke, player, null, null);
+    }
+
+    private static final Pattern ASKS_FOR_CRUDE = Pattern.compile(
+            "\\b(?:crude|crud|cruz|crewed|rude|swear\\w*|cuss\\w*|curs(?:e|ing)|foul|potty|hold(?:ing)? back)\\b");
+
+    /**
+     * Whether a command is a repeat rather than a request. Small models tend to
+     * pick the last command again for whatever's said next ("Back second" came
+     * back as crude_on, "Thousand" as the volume just set), so one that would
+     * change nothing wasn't what they meant, and crude mode only goes on from
+     * a line that asks for it.
+     * @param explicit whether explicit mode is on, or null if it isn't available
+     * @param crude whether crude mode is on, or null if it isn't available
+     * @param volume the volume now
+     */
+    static boolean isRepeat(String command, String args, String said, Boolean explicit, Boolean crude, int volume)
+    {
+        switch (command)
+        {
+            case "crude_on":
+                return Boolean.TRUE.equals(crude) || !ASKS_FOR_CRUDE.matcher(said.toLowerCase(Locale.ROOT)).find();
+            case "crude_off":
+                return !Boolean.TRUE.equals(crude);
+            case "explicit_on":
+                return Boolean.TRUE.equals(explicit);
+            case "explicit_off":
+                return !Boolean.TRUE.equals(explicit);
+            case "volume":
+                return args.equals(String.valueOf(volume));
+            default:
+                return false;
+        }
     }
 
     /** The prompt, with the commands for whichever modes are available here. */

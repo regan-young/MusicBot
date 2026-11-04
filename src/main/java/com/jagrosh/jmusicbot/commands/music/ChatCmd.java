@@ -72,7 +72,6 @@ public class ChatCmd extends MusicCommand
         if (event.getMember().getVoiceState().getChannel() instanceof net.dv8tion.jda.api.entities.channel.attribute.IAgeRestrictedChannel c
                 && c.isNSFW())
             how += " This channel is 18+: `" + prefix + "explicit on` (or just ask me) turns my explicit side on.";
-        how += " `" + prefix + "crude on` (or just ask me) makes me swear and roast you.";
         event.replySuccess("🎙️ Listening in " + event.getMember().getVoiceState().getChannel().getAsMention()
                 + ". " + how + " `" + prefix + name + "` again to stop listening; I'll stay in the channel until you tell me "
                 + "to leave (or `" + prefix + "leave`).");
