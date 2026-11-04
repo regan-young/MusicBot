@@ -43,7 +43,7 @@ public class BotConfig
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
             evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice,
             llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, smartTurnModel, researchModel, timezone,
-            nsfwLlmApi, nsfwLlmKey, nsfwLlmModel, nsfwLlmPrompt, coderApi, coderKey, riceApi;
+            nsfwLlmApi, nsfwLlmKey, nsfwLlmModel, nsfwLlmPrompt, crudeLlmPrompt, coderApi, coderKey, riceApi;
     private int llmMaxTokens, musicGain;
     private boolean stayInChannel, songInGame, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
@@ -114,6 +114,7 @@ public class BotConfig
             nsfwLlmKey = config.getString("nsfwllmkey");
             nsfwLlmModel = config.getString("nsfwllmmodel");
             nsfwLlmPrompt = config.getString("nsfwllmprompt");
+            crudeLlmPrompt = config.getString("crudellmprompt");
             coderApi = config.getString("coderapi");
             coderKey = config.getString("coderkey");
             riceApi = config.getString("riceapi");
@@ -477,6 +478,11 @@ public class BotConfig
     public String getNsfwLlmPrompt()
     {
         return nsfwLlmPrompt;
+    }
+
+    public String getCrudeLlmPrompt()
+    {
+        return crudeLlmPrompt;
     }
 
     public int getLlmMaxTokens()

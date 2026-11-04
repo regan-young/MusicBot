@@ -109,6 +109,27 @@ public class VoiceFeaturesTest
     }
 
     @Test
+    public void routesCrudeModeCommands()
+    {
+        assertEquals("crude_on", VoiceRouter.parse("{\"to_bot\": true, \"command\": \"crude_on\", \"args\": \"\"}").command);
+        assertEquals("crude_off", VoiceRouter.parse("{\"to_bot\": true, \"command\": \"crude_off\", \"args\": \"\"}").command);
+        // the prompt only describes the modes that are available
+        assertEquals(VoiceRouter.SYSTEM, VoiceRouter.system(null, null));
+        assertTrue(VoiceRouter.system(null, false).contains("crude_on"));
+        assertFalse(VoiceRouter.system(null, true).contains("explicit_on"));
+        assertTrue(VoiceRouter.system(false, false).contains("explicit_on"));
+    }
+
+    @Test
+    public void crudePersonaKeepsItsLimits()
+    {
+        String prompt = com.typesafe.config.ConfigFactory.parseResources("reference.conf").getString("crudellmprompt");
+        assertTrue(prompt.contains("Nothing sexual, ever"));
+        assertTrue(prompt.contains("No slurs"));
+        assertTrue(prompt.contains("drop the act"));
+    }
+
+    @Test
     public void routesExplicitModeCommands()
     {
         assertEquals("explicit_on", VoiceRouter.parse("{\"to_bot\": true, \"command\": \"explicit_on\", \"args\": \"\"}").command);

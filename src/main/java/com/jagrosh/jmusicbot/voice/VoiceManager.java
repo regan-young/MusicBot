@@ -142,10 +142,10 @@ public class VoiceManager
             boolean followUp, List<String> conversation) {}
 
     /**
-     * Explicit mode, in an age-restricted channel only. It goes on by command
-     * (?explicit on, or asking out loud) and off by command, when the router
-     * hears someone wanting it toned down or the talk turning serious, when
-     * ?chat ends, or after EXPLICIT_IDLE_MS unused.
+     * Explicit mode, in an age-restricted channel only, or crude mode, anywhere.
+     * It goes on by command (?explicit on, or asking out loud) and off by
+     * command, when the router hears someone wanting it toned down or the talk
+     * turning serious, when ?chat ends, or after EXPLICIT_IDLE_MS unused.
      */
     private static class Mood
     {
@@ -184,6 +184,9 @@ public class VoiceManager
         // the explicit side, in an 18+ channel only; null elsewhere
         final LlmClient.Conversation adultConversation;
         final Mood mood = new Mood();
+        // crude mode; null if it isn't set up
+        final LlmClient.Conversation crudeConversation;
+        final Mood crude = new Mood();
         private final Deque<Line> log = new ArrayDeque<>();
         // each speaker's lines are handled one after another, in order
         final Map<Long, CompletableFuture<Void>> lines = new ConcurrentHashMap<>();
@@ -199,9 +202,10 @@ public class VoiceManager
         final Set<CompletableFuture<Researcher.Result>> research = ConcurrentHashMap.newKeySet();
 
         Session(MessageChannel channel, VoiceListener listener, ScheduledFuture<?> poller, LlmClient.Conversation conversation,
-                LlmClient.Conversation adultConversation)
+                LlmClient.Conversation adultConversation, LlmClient.Conversation crudeConversation)
         {
             this.adultConversation = adultConversation;
+            this.crudeConversation = crudeConversation;
             this.channel = channel;
             this.listener = listener;
             this.poller = poller;
@@ -264,6 +268,10 @@ public class VoiceManager
     private final LlmClient llm;
     // for channels Discord marks age-restricted, or null
     private final LlmClient nsfwLlm;
+    // the same model as llm with the crude persona, or null. Not the local
+    // uncensored model: crude mode runs in ordinary channels, and that model
+    // let sexual lines and a slur through in testing, and swore at someone upset
+    private final LlmClient crudeLlm;
     private final VoiceRouter router;
     private final Researcher researcher;
     private final VoiceMemory memory = new VoiceMemory(Path.of("voice-memory.json"));
@@ -277,6 +285,8 @@ public class VoiceManager
     private final Map<Long, LlmClient.Conversation> textConversations = new ConcurrentHashMap<>();
     private final Map<Long, LlmClient.Conversation> textAdultConversations = new ConcurrentHashMap<>();
     private final Map<Long, Mood> textMoods = new ConcurrentHashMap<>();
+    private final Map<Long, LlmClient.Conversation> textCrudeConversations = new ConcurrentHashMap<>();
+    private final Map<Long, Mood> textCrudeMoods = new ConcurrentHashMap<>();
     private volatile CommandClient client;
     private final Map<Long, Session> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService ticker = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "voice-ticker"));
@@ -310,6 +320,8 @@ public class VoiceManager
                 : new LlmClient(config.getNsfwLlmApi(), config.getNsfwLlmKey(), nsfwModel,
                         (config.getNsfwLlmPrompt().isBlank() ? config.getLlmPrompt() : config.getNsfwLlmPrompt()) + ABOUT,
                         config.getLlmMaxTokens());
+        this.crudeLlm = llm == null || config.getCrudeLlmPrompt().isBlank() ? null
+                : new LlmClient(config.getLlmApi(), key, config.getLlmModel(), config.getCrudeLlmPrompt() + ABOUT, config.getLlmMaxTokens());
         String routerUrl = config.getRouterApi();
         // the router can share the chat LLM's key (both OpenRouter, say)
         String routerKey = config.getRouterKey() == null || config.getRouterKey().isBlank() ? key : config.getRouterKey();
@@ -406,7 +418,7 @@ public class VoiceManager
         if (adult)
             LOG.info("?chat in an 18+ channel: the router can switch to {} and the 18+ persona", nsfwLlm.getModel());
         sessions.put(guildId, new Session(channel, listener, poller, llm == null ? null : llm.newConversation(),
-                adult ? nsfwLlm.newConversation() : null));
+                adult ? nsfwLlm.newConversation() : null, crudeLlm == null ? null : crudeLlm.newConversation()));
         guild.getAudioManager().setReceivingHandler(listener);
     }
 
@@ -1033,16 +1045,24 @@ public class VoiceManager
         String name = member.getEffectiveName();
         String player = playerState(bot.getPlayerManager().setUpHandler(guild));
         LlmClient.Conversation conversation = textConversations.computeIfAbsent(channel.getIdLong(), id -> llm.newConversation());
-        if (nsfwLlm != null && router != null && isAgeRestricted(channel))
+        Mood mood = nsfwLlm != null && router != null && isAgeRestricted(channel)
+                ? textMoods.computeIfAbsent(channel.getIdLong(), id -> new Mood()) : null;
+        Mood crude = crudeLlm == null ? null : textCrudeMoods.computeIfAbsent(channel.getIdLong(), id -> new Mood());
+        if (router != null && (mood != null || crude != null))
         {
-            Mood mood = textMoods.computeIfAbsent(channel.getIdLong(), id -> new Mood());
             // as by voice, the router hears "explicit mode on/off" and "tone it down"
             try
             {
-                VoiceRouter.Route route = router.route(List.of(name + ": " + text), false, player, mood.spicy());
-                if (route.command.equals("explicit_on") || route.command.equals("explicit_off"))
+                VoiceRouter.Route route = router.route(List.of(name + ": " + text), false, player,
+                        mood == null ? null : mood.spicy(), crude == null ? null : crude.spicy());
+                if (mood != null && (route.command.equals("explicit_on") || route.command.equals("explicit_off")))
                 {
                     textReply(message, setExplicit(guild, channel, route.command.equals("explicit_on")));
+                    return;
+                }
+                if (crude != null && (route.command.equals("crude_on") || route.command.equals("crude_off")))
+                {
+                    textReply(message, setCrude(guild, channel, route.command.equals("crude_on")));
                     return;
                 }
             }
@@ -1050,11 +1070,17 @@ public class VoiceManager
             {
                 LOG.warn("Router request failed for a text message", e);
             }
-            if (mood.spicy())
-            {
-                mood.touch();
-                conversation = textAdultConversations.computeIfAbsent(channel.getIdLong(), id -> nsfwLlm.newConversation());
-            }
+        }
+        // both on in an 18+ channel: explicit is the one that was asked for there
+        if (mood != null && mood.spicy())
+        {
+            mood.touch();
+            conversation = textAdultConversations.computeIfAbsent(channel.getIdLong(), id -> nsfwLlm.newConversation());
+        }
+        else if (crude != null && crude.spicy())
+        {
+            crude.touch();
+            conversation = textCrudeConversations.computeIfAbsent(channel.getIdLong(), id -> crudeLlm.newConversation());
         }
         List<Long> people = new ArrayList<>(List.of(member.getIdLong()));
         message.getMentions().getMembers().forEach(m -> people.add(m.getIdLong()));
@@ -1219,6 +1245,40 @@ public class VoiceManager
         return (session != null && session.adultConversation != null && session.mood.spicy()) || (mood != null && mood.spicy());
     }
 
+    /**
+     * Turns crude mode on or off for ?chat in this guild and for text in this
+     * channel. Returns what to tell them.
+     */
+    public String setCrude(Guild guild, MessageChannel channel, boolean on)
+    {
+        if (crudeLlm == null)
+            return "Crude mode isn't set up: crudellmprompt is empty in the config.";
+        Session session = sessions.get(guild.getIdLong());
+        Mood text = textCrudeMoods.computeIfAbsent(channel.getIdLong(), id -> new Mood());
+        if (on)
+        {
+            text.on();
+            if (session != null)
+                session.crude.on();
+        }
+        else
+        {
+            text.reset();
+            if (session != null)
+                session.crude.reset();
+        }
+        LOG.info("Crude mode {} ({}#{})", on ? "on" : "off", session != null ? "?chat, " : "", channel.getName());
+        return on ? "Crude mode on. You asked for it." : "Crude mode off. Back to my best behaviour.";
+    }
+
+    /** Whether crude mode is on for ?chat in this guild or for text in this channel. */
+    public boolean isCrude(Guild guild, MessageChannel channel)
+    {
+        Session session = sessions.get(guild.getIdLong());
+        Mood mood = textCrudeMoods.get(channel.getIdLong());
+        return (session != null && session.crude.spicy()) || (mood != null && mood.spicy());
+    }
+
     /** Whether Discord marks the channel age-restricted: a voice channel, its built-in text chat, or a text channel. */
     private static boolean isAgeRestricted(Object channel)
     {
@@ -1367,7 +1427,8 @@ public class VoiceManager
             long t = System.currentTimeMillis();
             try
             {
-                route = router.route(recent, followUp, player, session.adultConversation == null ? null : session.mood.spicy());
+                route = router.route(recent, followUp, player, session.adultConversation == null ? null : session.mood.spicy(),
+                        session.crudeConversation == null ? null : session.crude.spicy());
             }
             catch (Exception e)
             {
@@ -1619,7 +1680,11 @@ public class VoiceManager
         boolean explicit = session.adultConversation != null && session.mood.spicy();
         if (explicit)
             session.mood.touch();
-        LlmClient.Conversation conversation = explicit ? session.adultConversation : session.conversation;
+        // both on in an 18+ channel: explicit is the one that was asked for there
+        boolean crude = !explicit && session.crudeConversation != null && session.crude.spicy();
+        if (crude)
+            session.crude.touch();
+        LlmClient.Conversation conversation = explicit ? session.adultConversation : crude ? session.crudeConversation : session.conversation;
         if (conversation == null)
             return null;
         // the last line is the one being answered; the rest is context
@@ -1730,6 +1795,10 @@ public class VoiceManager
             case "explicit_on":
             case "explicit_off":
                 confirm.accept(setExplicit(guild, channel, command.equals("explicit_on")));
+                return;
+            case "crude_on":
+            case "crude_off":
+                confirm.accept(setCrude(guild, channel, command.equals("crude_on")));
                 return;
             case "leave":
                 confirm.accept("Okay, I'm off. Catch you later.");

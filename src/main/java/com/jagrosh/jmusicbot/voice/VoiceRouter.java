@@ -64,9 +64,18 @@ public class VoiceRouter
             + "it down, clean it up or stop being dirty (while explicit mode is on, \"tone it down\" means this, "
             + "not the volume)";
 
+    /** Added to the prompt wherever crude mode is available. */
+    static final String CRUDE = "\n\nThe bot has a crude mode, where it swears and roasts people, that people switch on "
+            + "and off like a setting; the Crude line says whether it's on. Two more commands here:\n"
+            + "- crude_on: they ask for the mode itself to be switched on (\"turn crude mode on\", \"go crude\", "
+            + "\"start swearing at us\", \"stop holding back\"). Asking for one roast or insult is chat, not this\n"
+            + "- crude_off: only when the Crude line says on: they want it off: crude mode off, back to normal, or the "
+            + "bot to be nice, stop swearing or tone it down (\"tone it down\" means this only while Crude is on; "
+            + "when Crude is off it's the volume, about 20 less)";
+
     /** Commands the router may pick. "chat" goes to the conversational LLM, "none" is ignored. */
     static final Set<String> COMMANDS = Set.of("play", "radio", "mix", "skip", "skipto", "pause", "resume", "stop",
-            "volume", "shuffle", "repeat", "hush", "not_you", "leave", "explicit_on", "explicit_off", "chat", "none");
+            "volume", "shuffle", "repeat", "hush", "not_you", "leave", "explicit_on", "explicit_off", "crude_on", "crude_off", "chat", "none");
 
     static final String SYSTEM = "You route voice chat for Gunnabot, a music bot in a Discord voice channel with "
             + "several friends. Speech recognition is imperfect: the bot's name may come out as Gunnabot, Gunnerbot, "
@@ -161,17 +170,24 @@ public class VoiceRouter
      */
     public Route route(List<String> conversation, boolean botJustSpoke, String player) throws IOException, InterruptedException
     {
-        return route(conversation, botJustSpoke, player, null);
+        return route(conversation, botJustSpoke, player, null, null);
+    }
+
+    /** The prompt, with the commands for whichever modes are available here. */
+    static String system(Boolean explicit, Boolean crude)
+    {
+        return SYSTEM + (explicit != null ? MOOD : "") + (crude != null ? CRUDE : "");
     }
 
     /**
      * @param explicit in an 18+ channel, whether explicit mode is on, so the
      *                 router can judge the mood and switch it; null elsewhere
+     * @param crude whether crude mode is on, for the same reason; null if it isn't available
      */
-    public Route route(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit)
+    public Route route(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit, Boolean crude)
             throws IOException, InterruptedException
     {
-        JSONArray messages = new JSONArray().put(message("system", explicit != null ? SYSTEM + MOOD : SYSTEM));
+        JSONArray messages = new JSONArray().put(message("system", system(explicit, crude)));
         for (String[] ex : EXAMPLES)
         {
             messages.put(message("user", "Recent conversation:\n" + ex[0] + "\n" + NOT_SPOKEN + "\nPlayer: Volume 100."));
@@ -181,7 +197,8 @@ public class VoiceRouter
         // it, small models read follow-ups as questions about the song
         messages.put(message("user", "Recent conversation:\n" + String.join("\n", conversation) + "\n"
                 + (botJustSpoke ? JUST_SPOKE : NOT_SPOKEN) + "\nPlayer: " + player
-                + (explicit == null ? "" : "\nExplicit: " + (explicit ? "on" : "off"))));
+                + (explicit == null ? "" : "\nExplicit: " + (explicit ? "on" : "off"))
+                + (crude == null ? "" : "\nCrude: " + (crude ? "on" : "off"))));
         JSONObject body = new JSONObject()
                 .put("model", model)
                 .put("messages", messages)
