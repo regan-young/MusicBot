@@ -33,6 +33,15 @@ public class LlmClientTest
     }
 
     @Test
+    public void skipToNeedsASong()
+    {
+        LlmClient.Decision d = LlmClient.parseDecision("{\"action\":\"skipto\",\"query\":\"Dreams\",\"reply\":\"Skipping.\"}");
+        assertEquals(Type.SKIP_TO, d.action);
+        assertEquals("Dreams", d.query);
+        assertEquals(Type.CHAT, LlmClient.parseDecision("{\"action\":\"skipto\",\"query\":\"\",\"reply\":\"Which one?\"}").action);
+    }
+
+    @Test
     public void unknownActionIsChat()
     {
         assertEquals(Type.CHAT, LlmClient.parseDecision("{\"action\":\"dance\",\"reply\":\"No.\"}").action);

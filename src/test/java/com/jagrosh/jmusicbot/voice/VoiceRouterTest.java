@@ -55,6 +55,14 @@ public class VoiceRouterTest
     }
 
     @Test
+    public void skipToKeepsItsSong()
+    {
+        VoiceRouter.Route r = VoiceRouter.parse("{\"to_bot\": true, \"command\": \"skipto\", \"args\": \"Dreams\"}");
+        assertEquals("skipto", r.command);
+        assertEquals("Dreams", r.args);
+    }
+
+    @Test
     public void garbageIsNotForTheBot()
     {
         assertFalse(VoiceRouter.parse("I think so").toBot);

@@ -28,11 +28,11 @@ import java.util.regex.Pattern;
 public final class VoiceCommand
 {
     // RADIO, MIX and RESEARCH only come from the LLM; keyword parsing doesn't produce them
-    public enum Type { PLAY, RADIO, MIX, SKIP, PAUSE, RESUME, STOP, NOW_PLAYING, RESEARCH, REMIND, CANCEL_REMINDERS, FORGET, SPECIALS, INTROSPECT, CODE, ALLOW_CODER, REVOKE_CODER,
+    public enum Type { PLAY, RADIO, MIX, SKIP, SKIP_TO, PAUSE, RESUME, STOP, NOW_PLAYING, RESEARCH, REMIND, CANCEL_REMINDERS, FORGET, SPECIALS, INTROSPECT, CODE, ALLOW_CODER, REVOKE_CODER,
         LIST_CODERS, CHAT }
 
     public final Type type;
-    /** The song query for PLAY, the original transcript for CHAT, otherwise empty. */
+    /** The song query for PLAY and SKIP_TO, the original transcript for CHAT, otherwise empty. */
     public final String arg;
     /** Whether the speaker used one of the bot's names. */
     public final boolean addressed;
@@ -81,9 +81,12 @@ public final class VoiceCommand
 
         if (t.startsWith("play ") && t.length() > 5)
             return new VoiceCommand(Type.PLAY, t.substring(5).trim(), addressed);
+        if (t.matches("(?:skip|jump) to (?!(?:the )?next\\b).+"))
+            return new VoiceCommand(Type.SKIP_TO, t.substring(t.indexOf(" to ") + 4), addressed);
         switch (t)
         {
             case "skip": case "skip it": case "skip this": case "skip this song": case "next": case "next song":
+            case "skip to next": case "skip to next song": case "skip to the next song": case "skip to the next one":
                 return new VoiceCommand(Type.SKIP, "", addressed);
             case "pause": case "pause it": case "pause the music": case "pause music":
                 return new VoiceCommand(Type.PAUSE, "", addressed);

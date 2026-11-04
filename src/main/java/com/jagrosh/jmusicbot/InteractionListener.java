@@ -24,11 +24,15 @@ import com.jagrosh.jmusicbot.audio.RadioBrowser;
 import com.jagrosh.jmusicbot.commands.DJCommand;
 import com.jagrosh.jmusicbot.commands.HelpMessage;
 import com.jagrosh.jmusicbot.commands.InteractionCommandEvent;
+import com.jagrosh.jmusicbot.commands.dj.SkiptoCmd;
 import com.jagrosh.jmusicbot.commands.music.RadioCmd;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
+import net.dv8tion.jda.api.components.selections.SelectOption;
+import net.dv8tion.jda.api.components.selections.StringSelectMenu;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.events.interaction.command.CommandAutoCompleteInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
@@ -76,6 +80,8 @@ public class InteractionListener extends ListenerAdapter {
             new Slash("mix", "mix", "queue songs like a song (or like what's playing)",
                     new OptionData(OptionType.STRING, "song", "song to build the mix around", false)),
             new Slash("skip", null, "skip the song (a vote, unless you're a DJ or requested it)", null),
+            new Slash("skipto", "skipto", "jump to a song in the queue",
+                    new OptionData(OptionType.STRING, "song", "a song in the queue, by name or position", true).setAutoComplete(true)),
             new Slash("pause", null, "pause or resume", null),
             new Slash("stop", "stop", "stop playing and clear the queue", null),
             new Slash("queue", null, "what's playing and what's next", null),
@@ -132,7 +138,7 @@ public class InteractionListener extends ListenerAdapter {
         Guild guild = event.getGuild();
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
         if (slash.name().equals("queue")) {
-            event.reply(queueText(guild, handler)).queue();
+            event.reply(queueText(guild, handler)).setComponents(queueMenu(handler)).queue();
             return;
         }
 
@@ -192,6 +198,10 @@ public class InteractionListener extends ListenerAdapter {
 
     @Override
     public void onCommandAutoCompleteInteraction(@NotNull CommandAutoCompleteInteractionEvent event) {
+        if (event.getName().equals("skipto")) {
+            event.replyChoices(skipToChoices(event.getGuild(), event.getFocusedOption().getValue())).queue(null, t -> { });
+            return;
+        }
         if (!event.getName().equals("radio") || !event.getFocusedOption().getName().equals("station"))
             return;
         Command command = findCommand("radio");
@@ -226,7 +236,7 @@ public class InteractionListener extends ListenerAdapter {
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
 
         if (id.equals(PlayerControls.QUEUE)) {
-            event.reply(queueText(guild, handler)).setEphemeral(true).queue();
+            event.reply(queueText(guild, handler)).setComponents(queueMenu(handler)).setEphemeral(true).queue();
             return;
         }
 
@@ -292,6 +302,10 @@ public class InteractionListener extends ListenerAdapter {
     @Override
     public void onStringSelectInteraction(@NotNull StringSelectInteractionEvent event) {
         String id = event.getComponentId();
+        if (event.isFromGuild() && id.equals(PlayerControls.SKIP_TO) && !event.getValues().isEmpty()) {
+            onSkipToPick(event);
+            return;
+        }
         if (!event.isFromGuild() || event.getValues().isEmpty()
                 || !(id.startsWith(RadioCmd.PICK) || id.equals(RadioCmd.WORLD_PICK)))
             return;
@@ -338,6 +352,73 @@ public class InteractionListener extends ListenerAdapter {
             commandEvent.replyError("Something went wrong.");
         }
         commandEvent.cleanUpIfUnanswered();
+    }
+
+    // ------------------------------------------------------------------ skipping to a song
+
+    /** The menu under the queue, for jumping straight to a song; Discord allows 25 options. */
+    private List<ActionRow> queueMenu(AudioHandler handler) {
+        List<QueuedTrack> queue = handler.getQueue().getList();
+        if (queue.isEmpty())
+            return List.of();
+        StringSelectMenu.Builder menu = StringSelectMenu.create(PlayerControls.SKIP_TO).setPlaceholder("Skip to a song…");
+        for (int i = 0; i < queue.size() && i < 25; i++) {
+            AudioTrack track = queue.get(i).getTrack();
+            // the same song can be queued twice, and option values must differ
+            menu.addOptions(SelectOption.of(truncate((i + 1) + ". " + track.getInfo().title, 100), i + ":" + skipToId(track)));
+        }
+        return List.of(ActionRow.of(menu.build()));
+    }
+
+    /** Short enough for an option value, which a long URL's identifier isn't. */
+    private static String skipToId(AudioTrack track) {
+        return Integer.toHexString(track.getIdentifier().hashCode());
+    }
+
+    /**
+     * Finds a picked song by what it is, not only where it was: the queue
+     * changes while a menu stays open, and each skip moves everything along.
+     * The position only decides between copies of the same song.
+     */
+    private void onSkipToPick(StringSelectInteractionEvent event) {
+        String picked = event.getValues().get(0);
+        int colon = picked.indexOf(':');
+        int listed = Integer.parseInt(picked.substring(0, colon));
+        String id = picked.substring(colon + 1);
+        List<QueuedTrack> queue = bot.getPlayerManager().setUpHandler(event.getGuild()).getQueue().getList();
+        int position = 0;
+        if (listed < queue.size() && skipToId(queue.get(listed).getTrack()).equals(id))
+            position = listed + 1;
+        for (int i = 0; i < queue.size() && position == 0; i++)
+            if (skipToId(queue.get(i).getTrack()).equals(id))
+                position = i + 1;
+        if (position == 0) {
+            event.reply("That song isn't in the queue any more.").setEphemeral(true).queue();
+            return;
+        }
+        event.deferReply().queue();
+        InteractionCommandEvent commandEvent = new InteractionCommandEvent(event, String.valueOf(position), client, false);
+        try {
+            findCommand("skipto").run(commandEvent);
+        } catch (Exception e) {
+            LOG.error("Skipping to a picked song failed", e);
+            commandEvent.replyError("Something went wrong.");
+        }
+        commandEvent.cleanUpIfUnanswered();
+    }
+
+    /** /skipto's suggestions: picking one sends its position. */
+    private List<net.dv8tion.jda.api.interactions.commands.Command.Choice> skipToChoices(Guild guild, String typed) {
+        List<QueuedTrack> queue = bot.getPlayerManager().setUpHandler(guild).getQueue().getList();
+        List<String> songs = SkiptoCmd.songs(queue);
+        List<net.dv8tion.jda.api.interactions.commands.Command.Choice> choices = new ArrayList<>();
+        for (int i = 0; i < queue.size() && choices.size() < 25; i++) {
+            String position = String.valueOf(i + 1);
+            if (typed.isBlank() || typed.trim().equals(position) || SkiptoCmd.matches(songs.get(i), typed))
+                choices.add(new net.dv8tion.jda.api.interactions.commands.Command.Choice(
+                        truncate(position + ". " + queue.get(i).getTrack().getInfo().title, 100), position));
+        }
+        return choices;
     }
 
     private String queueText(Guild guild, AudioHandler handler) {

@@ -908,6 +908,47 @@ public class VoiceManager
     }
 
     /**
+     * "Add Sam and do what they asked": a reply has one action, so approving
+     * someone can carry the change as well, or it would never get made.
+     */
+    private boolean changeToo(LlmClient.Decision d, Member member)
+    {
+        return d.action == VoiceCommand.Type.ALLOW_CODER && !d.task.isEmpty() && member != null
+                && coder.isEnabled() && coder.isAllowed(member.getIdLong());
+    }
+
+    /** Asks for a change from ?chat; progress is posted and spoken while the session lasts. */
+    private String requestChange(Guild guild, Session session, Member member, String task, String holding)
+    {
+        return coder.request(member, task, holding, new Coder.Updates()
+        {
+            @Override
+            public void post(String s) { VoiceManager.this.post(session, s); }
+
+            @Override
+            public void say(String s)
+            {
+                if (sessions.get(guild.getIdLong()) == session)
+                    speak(guild, LlmClient.forSpeech(s));
+            }
+        }, summary -> deploying(guild, session.channel, summary));
+    }
+
+    /** Asks for a change from a text channel; progress goes back there. */
+    private String requestChange(net.dv8tion.jda.api.entities.Message message, Guild guild, MessageChannel channel, Member member,
+            String task, String holding)
+    {
+        return coder.request(member, task, holding, new Coder.Updates()
+        {
+            @Override
+            public void post(String s) { textReply(message, s); }
+
+            @Override
+            public void say(String s) {}
+        }, summary -> deploying(guild, channel, summary));
+    }
+
+    /**
      * A change is pushed and deploying: tell the channel (and the voice
      * channel, if ?chat is on), and note where the bot is so the new version
      * comes back there (see {@link #resumeAfterRestart}).
@@ -1042,6 +1083,7 @@ public class VoiceManager
                 case RADIO:  textCommand(message, member, reply, "radio", d.query); return;
                 case MIX:    textCommand(message, member, reply, "mix", d.query); return;
                 case SKIP:   textCommand(message, member, reply, "skip", ""); return;
+                case SKIP_TO: textCommand(message, member, reply, "skipto", d.query); return;
                 case STOP:   textCommand(message, member, reply, "stop", ""); return;
                 case PAUSE:  textCommand(message, member, reply, "pause", ""); return;
                 case RESUME: textCommand(message, member, reply, "resume", ""); return;
@@ -1083,19 +1125,14 @@ public class VoiceManager
                     });
                     return;
                 case CODE:
-                    textReply(message, coder.request(member, d.task, reply, new Coder.Updates()
-                    {
-                        @Override
-                        public void post(String s) { textReply(message, s); }
-
-                        @Override
-                        public void say(String s) {}
-                    }, summary -> deploying(guild, channel, summary)));
+                    textReply(message, requestChange(message, guild, channel, member, d.task, reply));
                     return;
                 case ALLOW_CODER:
                 case REVOKE_CODER:
                 case LIST_CODERS:
                     textReply(message, whitelist(d, member, message.getMentions().getMembers()));
+                    if (changeToo(d, member))
+                        textReply(message, requestChange(message, guild, channel, member, d.task, null));
                     return;
                 default:
                     textReply(message, reply);
@@ -1610,6 +1647,7 @@ public class VoiceManager
                 speak(guild, personal(d, member, session.channel, reply), heardAt);
                 break;
             case SKIP:   run(guild, member, session, "skip", "", heardAt); break;
+            case SKIP_TO: run(guild, member, session, "skipto", query, heardAt); break;
             case STOP:   run(guild, member, session, "stop", "", heardAt); break;
             case PAUSE:  run(guild, member, session, "pause", "", heardAt); break;
             case RESUME: run(guild, member, session, "resume", "", heardAt); break;
@@ -1617,18 +1655,7 @@ public class VoiceManager
                 introspect(guild, session, member, d.task, reply, heardAt);
                 break;
             case CODE:
-                speak(guild, coder.request(member, d.task, reply, new Coder.Updates()
-                {
-                    @Override
-                    public void post(String s) { VoiceManager.this.post(session, s); }
-
-                    @Override
-                    public void say(String s)
-                    {
-                        if (sessions.get(guild.getIdLong()) == session)
-                            speak(guild, LlmClient.forSpeech(s));
-                    }
-                }, summary -> deploying(guild, session.channel, summary)), heardAt);
+                speak(guild, requestChange(guild, session, member, d.task, reply), heardAt);
                 break;
             case ALLOW_CODER:
             case REVOKE_CODER:
@@ -1640,6 +1667,8 @@ public class VoiceManager
                         here.add(m);
                 });
                 speak(guild, whitelist(d, member, here), heardAt);
+                if (changeToo(d, member))
+                    speak(guild, requestChange(guild, session, member, d.task, null), heardAt);
                 break;
             case NOW_PLAYING:
                 AudioTrack t = bot.getPlayerManager().setUpHandler(guild).getPlayer().getPlayingTrack();
@@ -1680,7 +1709,7 @@ public class VoiceManager
         // spoken stop/skip/pause with nothing playing: nothing to do, and "Stopping the
         // music." to a silent channel (often a misheard reaction) just adds noise
         boolean idle = handler.getPlayer().getPlayingTrack() == null && handler.getQueue().isEmpty();
-        if (say != null && idle && (command.equals("stop") || command.equals("skip") || command.equals("pause")))
+        if (say != null && idle && (command.equals("stop") || command.equals("skip") || command.equals("skipto") || command.equals("pause")))
         {
             LOG.info("Ignored {}: nothing is playing", command);
             return;
@@ -1715,6 +1744,13 @@ public class VoiceManager
                     confirm.accept(settings.getRepeatMode() == RepeatMode.OFF ? "Repeat is on." : "Repeat is off.");
                 }
                 break;
+            case "skipto":
+                if (args.isBlank())
+                {
+                    confirm.accept("Which song should I skip to?");
+                    return;
+                }
+                break;
             case "volume":
                 if (!args.matches("\\d{1,3}"))
                 {
@@ -1742,6 +1778,9 @@ public class VoiceManager
             // covered by the confirmation
             if (say != null && (reply.startsWith(c.getError()) || reply.startsWith(c.getWarning()))
                     && spokeError.compareAndSet(false, true))
+                say.accept(spokenReply(reply));
+            // only the command knows which song it found, once its checks have passed
+            else if (say != null && command.equals("skipto") && reply.startsWith(c.getSuccess()))
                 say.accept(spokenReply(reply));
         });
         String name = command;

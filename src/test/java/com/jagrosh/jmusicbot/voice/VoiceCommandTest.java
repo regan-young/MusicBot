@@ -34,6 +34,18 @@ public class VoiceCommandTest
     }
 
     @Test
+    public void skipToASong()
+    {
+        VoiceCommand c = VoiceCommand.parse("Gunnabot, skip to Fleetwood Mac.");
+        assertEquals(Type.SKIP_TO, c.type);
+        assertEquals("fleetwood mac", c.arg);
+        assertEquals("number 3", VoiceCommand.parse("jump to number 3").arg);
+        // "the next one" is a plain skip, not a song called that
+        assertEquals(Type.SKIP, VoiceCommand.parse("skip to the next song").type);
+        assertEquals(Type.SKIP, VoiceCommand.parse("skip to next").type);
+    }
+
+    @Test
     public void barePlayResumes()
     {
         assertEquals(Type.RESUME, VoiceCommand.parse("Play.").type);

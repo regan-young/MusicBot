@@ -65,7 +65,7 @@ public class VoiceRouter
             + "not the volume)";
 
     /** Commands the router may pick. "chat" goes to the conversational LLM, "none" is ignored. */
-    static final Set<String> COMMANDS = Set.of("play", "radio", "mix", "skip", "pause", "resume", "stop",
+    static final Set<String> COMMANDS = Set.of("play", "radio", "mix", "skip", "skipto", "pause", "resume", "stop",
             "volume", "shuffle", "repeat", "hush", "not_you", "leave", "explicit_on", "explicit_off", "chat", "none");
 
     static final String SYSTEM = "You route voice chat for Gunnabot, a music bot in a Discord voice channel with "
@@ -87,7 +87,9 @@ public class VoiceRouter
             + "station or FM. args: station name or genre\n"
             + "- mix: queue several songs similar to a song or artist (\"more like this\", \"songs like X\", \"a mix of "
             + "X\"). args: song or artist, or empty for like what's playing\n"
-            + "- skip: skip the current song\n"
+            + "- skip: skip the current song (\"skip to the next one\" is this too)\n"
+            + "- skipto: jump to a song already in the queue (\"skip to Dreams\", \"jump to the Chappell Roan one\", "
+            + "\"go to number three\"). args: the song's name, or its number in the queue as digits\n"
             + "- pause: pause the music for now\n"
             + "- resume: continue paused music\n"
             + "- stop: stop the music and clear the queue (the bot stays in the channel)\n"
@@ -98,11 +100,13 @@ public class VoiceRouter
             + "\"up a bit\" is about 20 more, \"down a bit\" about 20 less\n"
             + "- shuffle: shuffle the queue\n"
             + "- repeat: toggle repeat (\"repeat\", \"repeat this song\", \"play on repeat\", \"loop the queue\")\n"
-            + "- hush: the bot should stop talking (\"shut up\", \"that's enough\", \"stop talking\"), not the music\n"
+            + "- hush: the bot should stop talking right now (\"shut up\", \"that's enough\", \"stop talking\"), not the "
+            + "music. Asking it to change how it talks or behaves from now on is chat\n"
             + "- not_you: they're telling the bot it wasn't being spoken to (\"not you, bot\", \"I wasn't talking to you\", "
             + "\"nobody asked you, clanker\")\n"
             + "- chat: anything else said to the bot: questions (including about the current song), banter, "
-            + "answers to what it asked, requests it can't do as a command\n"
+            + "answers to what it asked, requests it can't do as a command, and any request to change the bot's own "
+            + "code, features or behaviour, even when it mentions music, pausing or talking\n"
             + "- none: not talking to the bot\n"
             + "Use stop only when someone clearly asks for the music to stop.\n\n"
             + "Reply with only JSON: {\"to_bot\": true or false, \"command\": \"...\", \"args\": \"...\"}";
@@ -115,6 +119,8 @@ public class VoiceRouter
         { "Regan: robot, put on some Fleetwood Mac", "{\"to_bot\": true, \"command\": \"play\", \"args\": \"Fleetwood Mac\"}" },
         { "Sam: bot, play that last song again", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
         { "Sam: bot, put this song on repeat", "{\"to_bot\": true, \"command\": \"repeat\", \"args\": \"\"}" },
+        { "Regan: gunnabot, change your code so you don't pause the music when you speak", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },
+        { "Sam: bot, skip to the Fleetwood Mac one", "{\"to_bot\": true, \"command\": \"skipto\", \"args\": \"Fleetwood Mac\"}" },
         { "Regan: bot, chuck on the BBC World Service", "{\"to_bot\": true, \"command\": \"radio\", \"args\": \"BBC World Service\"}" },
         { "Regan: robot, can you do more songs like this one", "{\"to_bot\": true, \"command\": \"mix\", \"args\": \"\"}" },
         { "Sam: bot, play something you think we'd like", "{\"to_bot\": true, \"command\": \"chat\", \"args\": \"\"}" },

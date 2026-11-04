@@ -126,6 +126,8 @@ public class CoderTest
         LlmClient.Decision a = LlmClient.parseDecision("{\"action\":\"allow_coder\",\"query\":\"Sam\",\"reply\":\"\"}");
         assertEquals(Type.ALLOW_CODER, a.action);
         assertEquals("Sam", a.query);
+        // "add Sam and do what they asked" is one reply, so the change comes with it
+        assertEquals("Add a ?dance command", LlmClient.parseDecision("{\"action\":\"allow_coder\",\"query\":\"Sam\",\"task\":\"Add a ?dance command\"}").task);
         assertEquals(Type.REVOKE_CODER, LlmClient.parseDecision("{\"action\":\"revoke_coder\",\"query\":\"Sam\"}").action);
         assertEquals(Type.LIST_CODERS, LlmClient.parseDecision("{\"action\":\"list_coders\"}").action);
         LlmClient.Decision i = LlmClient.parseDecision("{\"action\":\"introspect\",\"task\":\"How do you decide when "

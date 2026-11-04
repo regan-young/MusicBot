@@ -53,6 +53,7 @@ public class PlayerControls {
     public static final String STOP = ID_PREFIX + "stop";
     public static final String REPEAT = ID_PREFIX + "repeat";
     public static final String QUEUE = ID_PREFIX + "queue";
+    public static final String SKIP_TO = ID_PREFIX + "skipto";
     // Radio buttons, handled with the rest of the radio UI
     public static final String RADIO_PREFIX = "radio:";
     public static final String RADIO_PANEL = RADIO_PREFIX + "panel";

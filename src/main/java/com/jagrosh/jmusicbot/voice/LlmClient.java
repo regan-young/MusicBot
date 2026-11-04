@@ -49,17 +49,17 @@ public class LlmClient
     // Appended to the configurable persona prompt; the code depends on this format.
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
             + "only a JSON object, no other text, with the keys in this order: {\"action\": one of \"play\", \"radio\", "
-            + "\"mix\", \"skip\", \"pause\", \"resume\", \"stop\", \"research\", \"remind\", \"cancel_reminders\", "
+            + "\"mix\", \"skip\", \"skipto\", \"pause\", \"resume\", \"stop\", \"research\", \"remind\", \"cancel_reminders\", "
             + "\"forget\", \"specials\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
-            + "search for (play, radio and mix), the product they're asking about (specials), or the person's name "
+            + "search for (play, radio and mix), the song's name or its number in the queue as digits (skipto), the product they're asking about (specials), or the person's name "
             + "(allow_coder and revoke_coder), otherwise empty; "
-            + "\"task\": for research, remind, introspect and code only, otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
+            + "\"task\": for research, remind, introspect and code only (and allow_coder, when a change is asked for too), otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
             + "usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
             + "out loud}. "
             + "Use play when they want a song, artist or album played or queued (query = what to search YouTube for), "
             + "radio for a live radio station or radio of a genre (query = station name or genre), mix for several "
             + "songs like a song or artist (query = that song or artist, empty for like what's playing), "
-            + "skip to move to the next song, pause and resume to pause or continue, stop to stop the music and "
+            + "skip to move to the next song, skipto to jump to a song already in the queue, pause and resume to pause or continue, stop to stop the music and "
             + "clear the queue. A temporary halt (\"hang on\", \"stop it for a sec\", \"hold the music\") is pause; "
             + "use stop only when they want the music finished. When they leave the choice to you (\"something you'd "
             + "like\", \"surprise me\", \"put some music on\"), pick one specific real song yourself, suited to the "
@@ -103,9 +103,12 @@ public class LlmClient
             + "command, different behaviour, or a fix for something you got wrong or that's broken (not a music "
             + "request, and not a question about how you work). Then task = a short, self-contained description of the "
             + "change for a programmer, with every detail from the conversation, and reply = a short line that you'll "
-            + "get to work on it; you'll report back by yourself when it's done. Use allow_coder when they ask to let "
+            + "get to work on it; you'll report back by yourself when it's done. A change only starts when your action "
+            + "is code, so with any other action never say you're working on one or that one is on its way. Use "
+            + "allow_coder when they ask to let "
             + "someone change your code and revoke_coder to stop them (query = that person's name), and list_coders "
-            + "when they ask who can. "
+            + "when they ask who can. If they also tell you to go ahead with a change, such as that person's request "
+            + "from the conversation, use allow_coder with task = that change, written as for code. "
             + "People call you Gunnabot, bot, robot or clanker. Every message you see was said to you, though not "
             + "always by name; the recent channel conversation in the context shows what they're responding to.";
 
@@ -116,7 +119,7 @@ public class LlmClient
                     .put("type", "object")
                     .put("properties", new JSONObject()
                             .put("action", new JSONObject().put("type", "string").put("enum", new JSONArray()
-                                    .put("play").put("radio").put("mix").put("skip").put("pause").put("resume").put("stop")
+                                    .put("play").put("radio").put("mix").put("skip").put("skipto").put("pause").put("resume").put("stop")
                                     .put("research").put("remind").put("cancel_reminders").put("forget").put("specials").put("introspect").put("code")
                                     .put("allow_coder").put("revoke_coder").put("list_coders").put("chat")))
                             .put("query", new JSONObject().put("type", "string"))
@@ -435,6 +438,7 @@ public class LlmClient
             case "radio":  action = query.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.RADIO; break;
             case "mix":    action = VoiceCommand.Type.MIX; break;
             case "skip":   action = VoiceCommand.Type.SKIP; break;
+            case "skipto": action = query.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.SKIP_TO; break;
             case "pause":  action = VoiceCommand.Type.PAUSE; break;
             case "resume": action = VoiceCommand.Type.RESUME; break;
             case "stop":   action = VoiceCommand.Type.STOP; break;

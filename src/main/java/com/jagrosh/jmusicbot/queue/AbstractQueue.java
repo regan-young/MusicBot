@@ -108,13 +108,6 @@ public abstract class AbstractQueue<T extends Queueable>
         return iset.size();
     }
 
-    public void skip(int number)
-    {
-        if (number > 0) {
-            list.subList(0, number).clear();
-        }
-    }
-
     /**
      * Move an item to a different position in the list
      * @param from The position of the item
