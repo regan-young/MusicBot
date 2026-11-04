@@ -25,9 +25,8 @@ import java.util.Queue;
 
 /**
  * Plays text-to-speech clips one after another on a guild's voice player.
- * AudioHandler sends this player's frames in place of the music while it's
- * speaking, so music pauses for the clip and then carries on. Each clip is a
- * temp WAV file, deleted once it has played.
+ * AudioHandler mixes this player's frames over the music, which keeps
+ * playing underneath. Each clip is a temp WAV file, deleted once it has played.
  */
 public class VoiceSpeaker extends AudioEventAdapter
 {

@@ -18,7 +18,7 @@ import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
 
 /**
- * Speaks text in the voice channel (text-to-speech). Music pauses for it.
+ * Speaks text in the voice channel (text-to-speech), over any music.
  */
 public class SayCmd extends MusicCommand
 {

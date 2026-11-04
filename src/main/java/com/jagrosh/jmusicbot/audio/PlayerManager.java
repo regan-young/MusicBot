@@ -18,6 +18,7 @@ package com.jagrosh.jmusicbot.audio;
 import com.dunctebot.sourcemanagers.DuncteBotSources;
 import com.jagrosh.jmusicbot.Bot;
 import com.sedmelluq.discord.lavaplayer.container.MediaContainerRegistry;
+import com.sedmelluq.discord.lavaplayer.format.StandardAudioDataFormats;
 import com.sedmelluq.discord.lavaplayer.player.AudioConfiguration;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager;
@@ -57,9 +58,11 @@ public class PlayerManager extends DefaultAudioPlayerManager
     public void init()
     {
         // Radio streams are mostly 44.1 kHz and Discord wants 48 kHz; the default
-        // LOW resampler is audibly worse. Opus quality 10 is the maximum.
+        // LOW resampler is audibly worse.
         getConfiguration().setResamplingQuality(AudioConfiguration.ResamplingQuality.HIGH);
-        getConfiguration().setOpusEncodingQuality(AudioConfiguration.OPUS_QUALITY_MAX);
+        // PCM rather than Opus, because encoded audio can't be mixed: AudioHandler
+        // puts the bot's voice over the music, and JDA encodes the result.
+        getConfiguration().setOutputFormat(StandardAudioDataFormats.DISCORD_PCM_S16_BE);
 
         TransformativeAudioSourceManager.createTransforms(bot.getConfig().getTransforms()).forEach(t -> registerSourceManager(t));
 

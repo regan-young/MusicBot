@@ -72,7 +72,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private final Deque<Played> history = new ArrayDeque<>(); // newest first
 
     private boolean karaoke;
-    private AudioFrame lastFrame;
+    private byte[] lastFrame;
     private AbstractQueue<QueuedTrack> queue;
 
     protected AudioHandler(PlayerManager manager, Guild guild, AudioPlayer player, AudioPlayer voicePlayer)
@@ -403,28 +403,45 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     }*/
     
     @Override
-    public boolean canProvide() 
+    public boolean canProvide()
     {
-        // Speech goes out instead of music while it plays. Music isn't pulled
-        // meanwhile, so it pauses and picks up where it left off.
-        lastFrame = speaker.getPlayer().provide();
-        if (lastFrame == null)
-            lastFrame = audioPlayer.provide();
+        // Both players are always pulled, so the music keeps going under speech
+        AudioFrame speech = speaker.getPlayer().provide();
+        AudioFrame music = audioPlayer.provide();
+        if (speech == null)
+            lastFrame = music == null ? null : music.getData();
+        else
+            lastFrame = music == null ? speech.getData() : mix(music.getData(), speech.getData());
         return lastFrame != null;
     }
 
     @Override
-    public ByteBuffer provide20MsAudio() 
+    public ByteBuffer provide20MsAudio()
     {
-        return ByteBuffer.wrap(lastFrame.getData());
+        return ByteBuffer.wrap(lastFrame);
     }
 
     @Override
-    public boolean isOpus() 
+    public boolean isOpus()
     {
-        return true;
+        return false; // frames are PCM (see PlayerManager.init), and JDA encodes them
     }
-    
+
+    /** Adds two frames of 16-bit big-endian PCM, holding peaks at the limit rather than letting them wrap. */
+    static byte[] mix(byte[] music, byte[] speech)
+    {
+        byte[] mixed = music.clone();
+        int end = Math.min(music.length, speech.length) & ~1;
+        for (int i = 0; i < end; i += 2)
+        {
+            int sample = (short) ((music[i] << 8) | (music[i + 1] & 0xFF)) + (short) ((speech[i] << 8) | (speech[i + 1] & 0xFF));
+            sample = Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, sample));
+            mixed[i] = (byte) (sample >> 8);
+            mixed[i + 1] = (byte) sample;
+        }
+        return mixed;
+    }
+
     
     // Private methods
     private Guild guild(JDA jda)
