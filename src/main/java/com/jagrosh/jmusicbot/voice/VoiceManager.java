@@ -1618,6 +1618,12 @@ public class VoiceManager
     /** Posts in the session's text channel, with no pings. Returns the result for the LLM. */
     private String post(Session session, String text)
     {
+        List<String> allowed = bot.getConfig().getPostChannels();
+        if (!PostChannels.allowed(allowed, session.channel.getName()))
+        {
+            LOG.info("Skipped a post in #{}: not a post channel", session.channel.getName());
+            return "Not posted. " + PostChannels.refusal(allowed);
+        }
         try
         {
             session.channel.sendMessage(text).setAllowedMentions(List.of()).queue(

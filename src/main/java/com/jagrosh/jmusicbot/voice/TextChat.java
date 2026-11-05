@@ -54,6 +54,13 @@ public class TextChat extends ListenerAdapter
         boolean replyToBot = replied != null && replied.getAuthor().getIdLong() == self.getIdLong();
         if (!mentioned && !replyToBot)
             return;
+        java.util.List<String> allowed = bot.getConfig().getPostChannels();
+        if (!PostChannels.allowed(allowed, event.getChannel().getName()))
+        {
+            // a one-line pointer, no pings; the LLM isn't asked
+            message.reply(PostChannels.refusal(allowed)).setAllowedMentions(java.util.List.of()).mentionRepliedUser(false).queue();
+            return;
+        }
         String raw = message.getContentRaw();
         String prefix = client.getPrefix();
         if (prefix != null && !prefix.isEmpty() && raw.startsWith(prefix))

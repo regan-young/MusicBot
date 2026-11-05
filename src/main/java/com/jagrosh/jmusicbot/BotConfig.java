@@ -44,6 +44,7 @@ public class BotConfig
             evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice,
             llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, smartTurnModel, researchModel, timezone,
             nsfwLlmApi, nsfwLlmKey, nsfwLlmModel, nsfwLlmPrompt, crudeLlmPrompt, coderApi, coderKey, riceApi;
+    private java.util.List<String> postChannels;
     private int llmMaxTokens, musicGain;
     private boolean stayInChannel, songInGame, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
@@ -118,6 +119,7 @@ public class BotConfig
             coderApi = config.getString("coderapi");
             coderKey = config.getString("coderkey");
             riceApi = config.getString("riceapi");
+            postChannels = config.getStringList("postchannels");
             llmMaxTokens = config.getInt("llmmaxtokens");
             musicGain = Math.max(0, Math.min(100, config.getInt("musicgain")));
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
@@ -478,6 +480,11 @@ public class BotConfig
     public String getNsfwLlmPrompt()
     {
         return nsfwLlmPrompt;
+    }
+
+    public java.util.List<String> getPostChannels()
+    {
+        return postChannels;
     }
 
     public String getCrudeLlmPrompt()
