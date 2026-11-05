@@ -19,6 +19,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -102,7 +104,8 @@ public class VoiceRouter
             + "X\"). args: song or artist, or empty for like what's playing\n"
             + "- skip: skip the current song (\"skip to the next one\" is this too)\n"
             + "- skipto: jump to a song already in the queue (\"skip to Dreams\", \"jump to the Chappell Roan one\", "
-            + "\"go to number three\"). args: the song's name, or its number in the queue as digits\n"
+            + "\"go to number three\"). args: the song's name, or its number in the queue as digits. Moving within the "
+            + "current song (\"thirty seconds in\") isn't this\n"
             + "- pause: pause the music for now\n"
             + "- resume: continue paused music\n"
             + "- stop: stop the music and clear the queue (the bot stays in the channel)\n"
@@ -182,12 +185,20 @@ public class VoiceRouter
     private static final Pattern ASKS_FOR_CRUDE = Pattern.compile(
             "\\b(?:crude|crud|cruz|crewed|rude|swear\\w*|cuss\\w*|curs(?:e|ing)|foul|potty|hold(?:ing)? back)\\b");
 
+    private static final Pattern SKIP_WORDS = Pattern.compile("\\b(?:skip(?:ping)?|jump|go(?: back)? to|move to|switch to|change to)\\b");
+    // "skip thirty seconds into this song" is moving within the song, not to another one
+    private static final Pattern DURATION = Pattern.compile("(?i)\\b(?:\\d+|thirty|forty|fifty|sixty|ten|twenty)\\s*(?:sec|secs|seconds?|min|mins|minutes?)\\b");
+    private static final Set<String> COMMON_WORDS = Set.of("the", "and", "some", "song", "songs", "music", "for", "you", "with", "from", "that", "this");
+    private static final Set<String> MUSIC_WITH_ARGS = Set.of("play", "radio", "mix", "skipto");
+    private static final long SAME_COMMAND_MS = 60_000;
+
     /**
      * Whether a command is a repeat rather than a request. Small models tend to
      * pick the last command again for whatever's said next ("Back second" came
-     * back as crude_on, "Thousand" as the volume just set), so one that would
-     * change nothing wasn't what they meant, and crude mode only goes on from
-     * a line that asks for it.
+     * back as crude_on, "Thousand" as the volume just set, "I'm Jim. No." as the
+     * song just queued), so one that would change nothing wasn't what they
+     * meant, crude mode only goes on from a line that asks for it, and a music
+     * command needs a line with something to do with it.
      * @param explicit whether explicit mode is on, or null if it isn't available
      * @param crude whether crude mode is on, or null if it isn't available
      * @param volume the volume now
@@ -206,9 +217,41 @@ public class VoiceRouter
                 return !Boolean.TRUE.equals(explicit);
             case "volume":
                 return args.equals(String.valueOf(volume));
+            case "skipto":
+                return !SKIP_WORDS.matcher(said.toLowerCase(Locale.ROOT)).find() || DURATION.matcher(args + " " + said).find();
+            case "play":
+            case "radio":
+            case "mix":
+                return !sharesAWord(args, said);
             default:
                 return false;
         }
+    }
+
+    /**
+     * Whether a music command just ran with the same song. Only worth asking
+     * about a line that didn't name the bot: "I thought this was Machine Gun
+     * Kelly" has the right words, straight after someone asked for him.
+     */
+    static boolean sameAsLast(String command, String args, String lastCommand, String lastArgs, long sinceMs)
+    {
+        return MUSIC_WITH_ARGS.contains(command) && command.equals(lastCommand) && args.equalsIgnoreCase(lastArgs)
+                && sinceMs < SAME_COMMAND_MS;
+    }
+
+    /** Whether the line has a word of what the command would search for; nothing to check means yes. */
+    private static boolean sharesAWord(String args, String said)
+    {
+        Set<String> heard = words(said);
+        Set<String> wanted = words(args);
+        return wanted.isEmpty() || wanted.stream().anyMatch(heard::contains);
+    }
+
+    private static Set<String> words(String s)
+    {
+        return Arrays.stream(s.toLowerCase(Locale.ROOT).replace("'", "").split("[^\\p{L}\\p{N}]+"))
+                .filter(w -> w.length() >= 3 && !COMMON_WORDS.contains(w))
+                .collect(Collectors.toSet());
     }
 
     /** The prompt, with the commands for whichever modes are available here. */

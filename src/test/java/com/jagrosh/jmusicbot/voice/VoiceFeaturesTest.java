@@ -145,6 +145,54 @@ public class VoiceFeaturesTest
         assertFalse(VoiceRouter.isRepeat("skip", "", "skip", null, null, 30));
     }
 
+    private static boolean musicRepeat(String command, String args, String said)
+    {
+        return VoiceRouter.isRepeat(command, args, said, null, null, 30);
+    }
+
+    @Test
+    public void musicCommandsNeedALineAboutThem()
+    {
+        // real lines the router answered with the song just queued, or made one up for
+        String moonlight = "don't blame it on the moonlight";
+        assertTrue(musicRepeat("play", moonlight, "Guys ever do uh jump jam at school?"));
+        assertTrue(musicRepeat("play", moonlight, "I'm Jim. No."));
+        assertTrue(musicRepeat("play", "Machine Gun Kelly", "Just saw it on YouTube."));
+        assertTrue(musicRepeat("play", "mariachi songs", "Oh, I think these guys are trying to kill me."));
+        assertFalse(musicRepeat("play", moonlight, "Uh, Gunabot, can you add to the cue, don't blame it on the moonlight?"));
+        assertFalse(musicRepeat("play", "Machine Gun Kelly", "A gunnerbot, play machine gun Kelly."));
+        assertFalse(musicRepeat("play", "funky tunes", "Gunabot, play us some funky tunes."));
+        assertFalse(musicRepeat("radio", "BBC World Service", "bot, chuck on the BBC"));
+        // "more like this": nothing to check
+        assertFalse(musicRepeat("mix", "", "bot, more like this"));
+    }
+
+    @Test
+    public void skipToNeedsALineAskingToSkip()
+    {
+        String mgk = "Machine Gun Kelly";
+        assertFalse(musicRepeat("skipto", mgk, "Um, Gunnerbot, can you skip all the songs until we get to Machine Gun Kelly?"));
+        assertFalse(musicRepeat("skipto", "3", "bot, go to number three"));
+        assertFalse(musicRepeat("skipto", "Dreams", "jump to Dreams"));
+        // real lines
+        assertTrue(musicRepeat("skipto", mgk, "Uh no."));
+        assertTrue(musicRepeat("skipto", mgk, "I thought this was machine gun Kelly for a minute there."));
+        assertTrue(musicRepeat("skipto", "30", "Can you put on some thirty seconds tomorrow?"));
+        assertTrue(musicRepeat("skipto", "30 seconds", "Isn't that kind of weird?"));
+        // moving within the song, which this can't do
+        assertTrue(musicRepeat("skipto", "thirty seconds", "Can you skip like thirty seconds into this song?"));
+    }
+
+    @Test
+    public void spotsTheSameMusicCommandAgain()
+    {
+        assertTrue(VoiceRouter.sameAsLast("play", "Dreams", "play", "dreams", 5_000));
+        assertFalse(VoiceRouter.sameAsLast("play", "Dreams", "play", "dreams", 120_000));
+        assertFalse(VoiceRouter.sameAsLast("play", "Toxic", "play", "dreams", 5_000));
+        assertFalse(VoiceRouter.sameAsLast("skip", "", "skip", "", 5_000));
+        assertFalse(VoiceRouter.sameAsLast("play", "Dreams", null, null, 5_000));
+    }
+
     @Test
     public void crudePersonaKeepsItsLimits()
     {

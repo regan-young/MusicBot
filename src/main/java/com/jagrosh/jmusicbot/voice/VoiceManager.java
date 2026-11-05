@@ -187,6 +187,9 @@ public class VoiceManager
         // crude mode; null if it isn't set up
         final LlmClient.Conversation crudeConversation;
         final Mood crude = new Mood();
+        // the last command run, to spot the router repeating it
+        volatile String lastCommand, lastArgs;
+        volatile long lastCommandAt;
         private final Deque<Line> log = new ArrayDeque<>();
         // each speaker's lines are handled one after another, in order
         final Map<Long, CompletableFuture<Void>> lines = new ConcurrentHashMap<>();
@@ -1439,9 +1442,11 @@ public class VoiceManager
             routerMs = System.currentTimeMillis() - t;
         }
         // a repeat of the last command: talk if it's clearly said to the bot, otherwise not for the bot at all
-        boolean repeat = route != null && route.toBot && VoiceRouter.isRepeat(route.command, route.args, said,
+        boolean repeat = route != null && route.toBot && (VoiceRouter.isRepeat(route.command, route.args, said,
                 session.adultConversation == null ? null : session.mood.spicy(),
-                session.crudeConversation == null ? null : session.crude.spicy(), handler.getVolume());
+                session.crudeConversation == null ? null : session.crude.spicy(), handler.getVolume())
+                || (!named && VoiceRouter.sameAsLast(route.command, route.args, session.lastCommand, session.lastArgs,
+                        System.currentTimeMillis() - session.lastCommandAt)));
         if (repeat)
             LOG.info("Ignored {} from the router as a repeat: {}", route.command, said);
         boolean toBot = named || (route != null && route.toBot && (!repeat || followUp));
@@ -1765,6 +1770,9 @@ public class VoiceManager
      */
     private void run(Guild guild, Member member, Session session, String command, String args, long heardAt)
     {
+        session.lastCommand = command;
+        session.lastArgs = args;
+        session.lastCommandAt = System.currentTimeMillis();
         run(guild, member, session.channel, command, args, s -> speak(guild, s, heardAt));
     }
 
