@@ -23,6 +23,7 @@ import net.dv8tion.jda.api.events.session.ShutdownEvent;
 import net.dv8tion.jda.api.events.guild.GuildJoinEvent;
 import net.dv8tion.jda.api.events.guild.voice.GuildVoiceUpdateEvent;
 import net.dv8tion.jda.api.events.message.MessageDeleteEvent;
+import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
@@ -81,6 +82,17 @@ public class Listener extends ListenerAdapter
     public void onGuildVoiceUpdate(@NotNull GuildVoiceUpdateEvent event)
     {
         bot.getAloneInVoiceHandler().onVoiceUpdate(event);
+        if (!event.getMember().getUser().isBot())
+            bot.getLastSeen().voice(event.getMember().getIdLong(), event.getMember().getEffectiveName(),
+                    System.currentTimeMillis());
+    }
+
+    @Override
+    public void onMessageReceived(@NotNull MessageReceivedEvent event)
+    {
+        if (event.isFromGuild() && !event.getAuthor().isBot() && !event.isWebhookMessage() && event.getMember() != null)
+            bot.getLastSeen().message(event.getAuthor().getIdLong(), event.getMember().getEffectiveName(),
+                    System.currentTimeMillis());
     }
 
     @Override

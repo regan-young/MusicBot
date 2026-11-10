@@ -740,6 +740,7 @@ public class VoiceManager
                         : "Done, I've cancelled your " + n + " reminders.";
             case FORGET:
                 memory.forget(member.getIdLong());
+                bot.getLastSeen().forget(member.getIdLong());
                 LOG.info("Forgot everything about {}", member.getEffectiveName());
                 return reply.isEmpty() ? "Done. I've forgotten what I knew about you." : reply;
             default:

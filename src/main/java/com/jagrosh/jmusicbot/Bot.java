@@ -27,6 +27,7 @@ import com.jagrosh.jmusicbot.audio.PlayerManager;
 import com.jagrosh.jmusicbot.gui.GUI;
 import com.jagrosh.jmusicbot.playlist.PlaylistLoader;
 import com.jagrosh.jmusicbot.settings.SettingsManager;
+import com.jagrosh.jmusicbot.voice.LastSeen;
 import com.jagrosh.jmusicbot.voice.VoiceManager;
 import java.util.Objects;
 import net.dv8tion.jda.api.JDA;
@@ -50,6 +51,7 @@ public class Bot
     private final AloneInVoiceHandler aloneInVoiceHandler;
     private final PlayerControls playerControls;
     private final VoiceManager voiceManager;
+    private final LastSeen lastSeen = new LastSeen(java.nio.file.Path.of("last-seen.json"));
     
     private boolean shuttingDown = false;
     private JDA jda;
@@ -121,6 +123,11 @@ public class Bot
     public VoiceManager getVoiceManager()
     {
         return voiceManager;
+    }
+
+    public LastSeen getLastSeen()
+    {
+        return lastSeen;
     }
 
     public AloneInVoiceHandler getAloneInVoiceHandler()

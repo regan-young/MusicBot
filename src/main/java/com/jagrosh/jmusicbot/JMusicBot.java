@@ -219,6 +219,7 @@ public class JMusicBot {
                         new LeaveCmd(bot),
                         new ExplicitCmd(bot),
                         new CrudeCmd(bot),
+                        new LastSeenCmd(bot),
                         new VolumeCmd(bot),
                         new KaraokeCmd(bot),
 
