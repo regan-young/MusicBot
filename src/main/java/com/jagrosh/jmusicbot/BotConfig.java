@@ -42,7 +42,7 @@ public class BotConfig
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
             evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice,
-            llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, smartTurnModel, researchModel, timezone,
+            llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, routerDecisionModel, smartTurnModel, researchModel, timezone,
             nsfwLlmApi, nsfwLlmKey, nsfwLlmModel, nsfwLlmPrompt, crudeLlmPrompt, coderApi, coderKey, riceApi;
     private java.util.List<String> postChannels;
     private int llmMaxTokens, musicGain;
@@ -108,6 +108,7 @@ public class BotConfig
             routerApi = config.getString("routerapi");
             routerKey = config.getString("routerkey");
             routerModel = config.getString("routermodel");
+            routerDecisionModel = config.getString("routerdecisionmodel");
             smartTurnModel = config.getString("smartturnmodel");
             researchModel = config.getString("researchmodel");
             timezone = config.getString("timezone");
@@ -430,6 +431,11 @@ public class BotConfig
     public String getRouterModel()
     {
         return routerModel;
+    }
+
+    public String getRouterDecisionModel()
+    {
+        return routerDecisionModel;
     }
 
     public String getSmartTurnModel()

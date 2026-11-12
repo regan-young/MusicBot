@@ -19,6 +19,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -29,33 +30,80 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.json.JSONString;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Asks a small, fast LLM (Gemma 3 12B on OpenRouter in the homelab) two things
- * about each line of voice chat: is it said to the bot, and which bot command
- * does it map to. That lets people talk naturally ("yeah go on then" right
- * after the bot asked something) instead of saying the bot's name every
- * time, and runs music requests without a round trip to the cloud LLM.
+ * Asks a small, fast model two things about each line of voice chat: is it
+ * said to the bot, and which bot command does it map to. That lets people talk
+ * naturally ("yeah go on then" right after the bot asked something) instead of
+ * saying the bot's name every time, and runs music requests without a round
+ * trip to the cloud LLM.
+ *
+ * There are two ways to ask. A decision model (Gemini Decision 1 through
+ * OpenRouter's Decisions API) answers both questions with probabilities and
+ * writes no text, so it's quick and says how sure it is; the chat model
+ * (Gemma 3 12B) is then only asked for what a command needs spelled out, the
+ * song or the volume. Without a decision model, or when it fails, the chat
+ * model answers everything as JSON, as it did before.
  */
 public class VoiceRouter
 {
+    private static final Logger LOG = LoggerFactory.getLogger(VoiceRouter.class);
+
     /** A routed line: whether it's for the bot, and the command with its argument. */
     public static class Route
     {
         public final boolean toBot;
         public final String command, args;
+        /** How likely the line is for the bot, 0 to 1; just 1 or 0 from a model that only says yes or no. */
+        public final double confidence;
+        /** Whether the confidence is a real probability, which can outweigh hearing the bot's name. */
+        public final boolean scored;
 
         Route(boolean toBot, String command, String args)
+        {
+            this(toBot, command, args, toBot ? 1 : 0, false);
+        }
+
+        Route(boolean toBot, String command, String args, double confidence, boolean scored)
         {
             this.toBot = toBot;
             this.command = command;
             this.args = args;
+            this.confidence = confidence;
+            this.scored = scored;
         }
+    }
+
+    // How sure a decision model must be before the bot acts on a line. Butting
+    // in on friends is worse than being asked twice, so a line with nothing
+    // pointing at the bot needs more. On two evenings of real lines, ones for
+    // the bot scored 0.53 and up and the rest 0.43 and down.
+    static final double FOR_BOT = 0.5, FOR_BOT_UNPROMPTED = 0.6;
+
+    /**
+     * Whether to act on a line.
+     * @param route the router's answer, or null if it couldn't be asked
+     * @param named whether the line has one of the bot's names in it
+     * @param followUp whether the bot answered this speaker a moment ago
+     */
+    static boolean forBot(Route route, boolean named, boolean followUp)
+    {
+        if (route == null)
+            return named;
+        // a yes or no can't be weighed against the name, so the name wins. A
+        // probability can: "are you still going bot?" is about a Dota lane
+        if (!route.scored)
+            return named || route.toBot;
+        return route.confidence >= (named || followUp ? FOR_BOT : FOR_BOT_UNPROMPTED);
     }
 
     /** Added to the prompt in age-restricted channels, where the bot has an explicit mode. */
@@ -157,7 +205,9 @@ public class VoiceRouter
             .connectTimeout(Duration.ofSeconds(3)).build();
     // a normal answer takes about a second; past this one is probably stuck
     private static final long HEDGE_AFTER_MS = 2000;
-    private final String baseUrl, apiKey, model;
+    // the decision model normally answers in 0.7 s
+    private static final long DECISION_HEDGE_AFTER_MS = 1200;
+    private final String baseUrl, apiKey, model, decisionModel;
     private final boolean openRouter;
 
     /**
@@ -166,10 +216,28 @@ public class VoiceRouter
      */
     public VoiceRouter(String baseUrl, String apiKey, String model)
     {
+        this(baseUrl, apiKey, model, null);
+    }
+
+    /**
+     * @param decisionModel a model on OpenRouter's Decisions API to make the
+     *                      choices, leaving the chat model the song names and
+     *                      volumes; null or empty for the chat model alone
+     */
+    public VoiceRouter(String baseUrl, String apiKey, String model, String decisionModel)
+    {
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.apiKey = apiKey == null ? "" : apiKey;
         this.model = model;
         this.openRouter = this.baseUrl.contains("openrouter.ai");
+        // the Decisions API is OpenRouter's own
+        this.decisionModel = decisionModel == null || decisionModel.isBlank() || !openRouter ? null : decisionModel.trim();
+    }
+
+    /** Which models route, for the log. */
+    public String describe()
+    {
+        return decisionModel == null ? model : decisionModel + ", with " + model + " for song names and volumes";
     }
 
     /**
@@ -268,6 +336,41 @@ public class VoiceRouter
     public Route route(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit, Boolean crude)
             throws IOException, InterruptedException
     {
+        return route(conversation, botJustSpoke, player, explicit, crude, true);
+    }
+
+    /**
+     * Routes a line for the command alone, without what it needs spelled out:
+     * enough to see a mode being switched, and one request fewer.
+     */
+    public Route command(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit, Boolean crude)
+            throws IOException, InterruptedException
+    {
+        return route(conversation, botJustSpoke, player, explicit, crude, false);
+    }
+
+    private Route route(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit, Boolean crude,
+            boolean withArgs) throws IOException, InterruptedException
+    {
+        if (decisionModel != null)
+        {
+            try
+            {
+                return decide(conversation, botJustSpoke, player, explicit, crude, withArgs);
+            }
+            catch (IOException | JSONException e)
+            {
+                // the Decisions API is in alpha: carry on with the chat model
+                LOG.warn("{} couldn't route a line, asking {}: {}", decisionModel, model, e.toString());
+            }
+        }
+        return ask(conversation, botJustSpoke, player, explicit, crude);
+    }
+
+    /** Routes a line with the chat model alone, which answers in JSON. */
+    Route ask(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit, Boolean crude)
+            throws IOException, InterruptedException
+    {
         JSONArray messages = new JSONArray().put(message("system", system(explicit, crude)));
         for (String[] ex : EXAMPLES)
         {
@@ -280,10 +383,16 @@ public class VoiceRouter
                 + (botJustSpoke ? JUST_SPOKE : NOT_SPOKEN) + "\nPlayer: " + player
                 + (explicit == null ? "" : "\nExplicit: " + (explicit ? "on" : "off"))
                 + (crude == null ? "" : "\nCrude: " + (crude ? "on" : "off"))));
+        return parse(complete(messages, 64));
+    }
+
+    /** Sends a chat request to the chat model and returns what it wrote. */
+    private String complete(JSONArray messages, int maxTokens) throws IOException, InterruptedException
+    {
         JSONObject body = new JSONObject()
                 .put("model", model)
                 .put("messages", messages)
-                .put("max_tokens", 64)
+                .put("max_tokens", maxTokens)
                 .put("temperature", 0);
         if (openRouter)
         {
@@ -292,35 +401,265 @@ public class VoiceRouter
             body.put("reasoning", new JSONObject().put("enabled", false));
             body.put("provider", new JSONObject().put("sort", "latency"));
         }
-        HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(baseUrl + "/v1/chat/completions"))
-                .timeout(Duration.ofSeconds(10))
+        JSONObject res = post("/v1/chat/completions", body.toString(), 10, HEDGE_AFTER_MS);
+        JSONArray choices = res.optJSONArray("choices");
+        return choices == null || choices.isEmpty() ? ""
+                : choices.getJSONObject(0).getJSONObject("message").optString("content", "");
+    }
+
+    private JSONObject post(String path, String body, int timeoutSeconds, long hedgeAfterMs) throws IOException, InterruptedException
+    {
+        HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(baseUrl + path))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()));
+                .POST(HttpRequest.BodyPublishers.ofString(body));
         if (!apiKey.isEmpty())
             req.header("Authorization", "Bearer " + apiKey);
-        HttpResponse<String> res = send(req.build());
+        HttpResponse<String> res = send(req.build(), hedgeAfterMs);
         if (res.statusCode() != 200)
             throw new IOException("Router failed: HTTP " + res.statusCode());
-        JSONArray choices = new JSONObject(res.body()).optJSONArray("choices");
-        String content = choices == null || choices.isEmpty() ? ""
-                : choices.getJSONObject(0).getJSONObject("message").optString("content", "");
-        return parse(content);
+        return new JSONObject(res.body());
+    }
+
+    // The decision model's questions. It gets no worked examples, so what
+    // these say is all it knows about the bot and the people talking.
+    private static final String TO_BOT = "This is voice chat between friends in a Discord channel, usually while they "
+            + "play Dota 2 together. Gunnabot is the music bot in the channel, and she can chat too. Speech recognition is "
+            + "imperfect: her name may come out as Gunnerbot, Gunabot, Ganabot, Annabot, gonna bot, bot, robot or clanker. "
+            + "Is the speaker of last_line talking TO Gunnabot? Judge last_line only; earlier_lines are context.";
+    private static final String TO_BOT_TRUE = "They ask or tell Gunnabot something, or answer what she just said to them. "
+            + "bot_just_answered_this_speaker makes a reply to her more likely, but only when the line makes sense as one.";
+    private static final String TO_BOT_FALSE = "They are talking to their friends, reacting to something, or talking ABOUT "
+            + "the bot (she, her, it, the bot, 'why did Gunnabot say that'). Game talk is not for her: in Dota 'bot' is the "
+            + "bottom lane ('going bot', 'bot tower'), and pause, stop, skip and play are often about the game. A line that "
+            + "only continues the friends' own conversation is false even straight after she spoke.";
+    private static final String WHICH = "Which of Gunnabot's commands does last_line itself ask for? Earlier lines are only "
+            + "context: never pick a command because someone asked for it earlier or the bot just did it. An answer to "
+            + "something the bot asked ('yes', 'go on then', 'the first one') is chat.";
+    private static final String[][] CHOICES = {
+        { "play", "Play or queue a song, artist or album they name." },
+        { "radio", "Tune in to a live radio station (RNZ, ZM, The Edge, The Rock, George FM, BBC, Triple J, ...) or radio "
+                + "of a genre; anything said with radio, station or FM." },
+        { "mix", "Queue several songs similar to a song or artist ('more like this', 'songs like X', 'a mix of X')." },
+        { "skip", "Skip the current song, or go to the next one." },
+        { "skipto", "Jump to a particular song already in the queue, by name or number ('skip to Dreams', 'go to number "
+                + "three')." },
+        { "pause", "Pause the music for now." },
+        { "resume", "Continue paused music." },
+        { "stop", "Stop the music and clear the queue. Only when they clearly ask for the music to stop." },
+        { "leave", "Tell the bot to leave the voice channel ('bot, you can go', 'disconnect'). Someone saying they are "
+                + "leaving themselves is none." },
+        { "volume", "Change the music volume: louder, quieter, or to a number. A question about the volume is chat." },
+        { "shuffle", "Shuffle the queue." },
+        { "repeat", "Toggle repeat or loop for the song or queue." },
+        { "hush", "The bot should stop talking right now ('shut up', 'that's enough', 'stop talking'), not the music." },
+        { "not_you", "Telling the bot it was not being spoken to ('not you, bot', 'I wasn't talking to you', 'nobody "
+                + "asked you'). Putting the bot right about what they meant is chat." },
+    };
+    private static final String[][] EXPLICIT_CHOICES = {
+        { "explicit_on", "Switch the bot's explicit mode on ('turn explicit mode on', 'go NSFW'), only when explicit_mode "
+                + "is off. Asking for dirty talk or flirting is chat." },
+        { "explicit_off", "Only when explicit_mode is on: switch it off, back to normal, tone it down or clean it up." },
+    };
+    private static final String[][] CRUDE_CHOICES = {
+        { "crude_on", "Switch the bot's crude mode on ('turn crude mode on', 'go crude', 'start swearing at us'), only "
+                + "when crude_mode is off. Asking for one roast or insult is chat." },
+        { "crude_off", "Only when crude_mode is on: switch it off, be nice, stop swearing, or tone it down." },
+    };
+    // chat and none go last, after the modes
+    private static final String[][] LAST_CHOICES = {
+        { "chat", "Anything else said to the bot: questions (including about the current song or the volume), banter, "
+                + "answers to what it asked, requests it can't do as a command, and any request to change the bot's own "
+                + "code or behaviour. Also music requests that leave the choice to the bot or ask by mood ('something "
+                + "chill', 'a banger', 'surprise me') or for a song played earlier ('play that again')." },
+        { "none", "Not said to the bot at all." },
+    };
+
+    /** A JSON object whose keys stay in the order given, which JSONObject's don't. */
+    private static JSONString ordered(Object... keysAndValues)
+    {
+        StringBuilder sb = new StringBuilder("{");
+        for (int i = 0; i < keysAndValues.length; i += 2)
+            sb.append(i == 0 ? "" : ",").append(JSONObject.quote((String) keysAndValues[i])).append(':')
+              .append(JSONObject.valueToString(keysAndValues[i + 1]));
+        String json = sb.append('}').toString();
+        return () -> json;
+    }
+
+    /** The Decisions API request for a line. */
+    String decisionRequest(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit, Boolean crude)
+    {
+        List<Object> state = new ArrayList<>(List.of(
+                "earlier_lines", new JSONArray(conversation.subList(0, conversation.size() - 1)),
+                "last_line", conversation.get(conversation.size() - 1),
+                "bot_just_answered_this_speaker", botJustSpoke,
+                "player", player));
+        List<Object> choices = new ArrayList<>();
+        for (String[] c : CHOICES)
+            choices.addAll(List.of(c[0], c[1]));
+        if (explicit != null)
+        {
+            state.addAll(List.of("explicit_mode", explicit ? "on" : "off"));
+            for (String[] c : EXPLICIT_CHOICES)
+                choices.addAll(List.of(c[0], c[1]));
+        }
+        if (crude != null)
+        {
+            state.addAll(List.of("crude_mode", crude ? "on" : "off"));
+            for (String[] c : CRUDE_CHOICES)
+                choices.addAll(List.of(c[0], c[1]));
+        }
+        for (String[] c : LAST_CHOICES)
+            choices.addAll(List.of(c[0], c[1]));
+        return ordered(
+                "model", decisionModel,
+                "state", ordered(state.toArray()),
+                "questions", ordered(
+                        "to_bot", ordered("type", "noul", "instructions", TO_BOT,
+                                "criteria", ordered("true", TO_BOT_TRUE, "false", TO_BOT_FALSE)),
+                        "command", ordered("type", "choice", "instructions", WHICH,
+                                "criteria", ordered(choices.toArray())))).toJSONString();
+    }
+
+    /**
+     * Routes a line with the decision model, then asks the chat model for the
+     * song or volume if the command needs one.
+     */
+    private Route decide(List<String> conversation, boolean botJustSpoke, String player, Boolean explicit, Boolean crude,
+            boolean withArgs) throws IOException, InterruptedException
+    {
+        JSONObject res = post("/alpha/decisions", decisionRequest(conversation, botJustSpoke, player, explicit, crude),
+                5, DECISION_HEDGE_AFTER_MS);
+        Route route = parseDecision(res);
+        if (!withArgs || !NEEDS_ARGS.contains(route.command) || route.confidence < FOR_BOT)
+            return route;
+        String args;
+        try
+        {
+            args = checkArgs(route.command, args(route.command, conversation.get(conversation.size() - 1), player), player);
+        }
+        catch (IOException | JSONException e)
+        {
+            LOG.warn("{} couldn't say what to {}: {}", model, route.command, e.toString());
+            args = null;
+        }
+        // without the song or the number, the chat LLM can still work out what they want
+        return new Route(route.toBot, args == null ? "chat" : route.command, args == null ? "" : args, route.confidence, true);
+    }
+
+    // below this, the decision model is guessing at the command; talk it over instead
+    private static final double SURE_OF_COMMAND = 0.5;
+
+    /**
+     * Reads a Decisions API answer. The model is asked twice over whether the
+     * line is for the bot, once outright and once as the "none" command, and
+     * the two err differently ("I wasn't talking to you" is plainly not_you,
+     * and plainly not talking to the bot), so the confidence is their mean.
+     */
+    static Route parseDecision(JSONObject response)
+    {
+        JSONObject answers = response.getJSONObject("answers");
+        double toBot = answers.getJSONObject("to_bot").getDouble("noul");
+        JSONObject which = answers.getJSONObject("command");
+        String command = which.optString("choice", "none").trim().toLowerCase(Locale.ROOT);
+        JSONObject probabilities = which.optJSONObject("probabilities");
+        double none = probabilities == null ? (command.equals("none") ? 1 : 0) : probabilities.optDouble("none", 0);
+        double confidence = (toBot + 1 - none) / 2;
+        if (!COMMANDS.contains(command) || command.equals("none") || which.optDouble("confidence", 1) < SURE_OF_COMMAND)
+            command = "chat";
+        return new Route(confidence >= FOR_BOT, command, "", confidence, true);
+    }
+
+    /** Commands that need something from the line: a song, a station or a number. */
+    static final Set<String> NEEDS_ARGS = Set.of("play", "radio", "mix", "skipto", "volume");
+
+    private static final String ARGS_SYSTEM = "Gunnabot is a music bot in a Discord voice channel. Someone just asked it "
+            + "for the command below; work out what the command needs from their line. Speech recognition is imperfect, "
+            + "and the bot's name (Gunnabot, Gunnerbot, bot, robot, clanker), filler and politeness aren't part of it.\n"
+            + "- play: the song, artist or album to search for\n"
+            + "- radio: the station name or genre\n"
+            + "- mix: the song or artist to base the mix on, or empty for what's playing now\n"
+            + "- skipto: the queued song's name, or its number in the queue as digits\n"
+            + "- volume: a number from 0 to 150 to set it to (\"to N\", or a bare number), or else the change with "
+            + "its sign: +20 or -20 for up or down, or a bit; +40 or -40 for a lot; +N or -N for \"by N\"\n"
+            + "Reply with only JSON: {\"args\": \"...\"}";
+    private static final String[][] ARGS_EXAMPLES = {
+        { "play", "Regan: robot, put on some Fleetwood Mac", "Volume 100.", "Fleetwood Mac" },
+        { "play", "Devon: Gunnerbot, play us uh Africa by Toto, mate.", "Volume 100.", "Africa by Toto" },
+        { "radio", "Regan: bot, chuck on the BBC World Service", "Volume 100.", "BBC World Service" },
+        { "mix", "Regan: robot, can you do more songs like this one", "Now playing: Dreams by Fleetwood Mac. Volume 100.", "" },
+        { "mix", "Sam: Gunnabot make us a mix of Tame Impala", "Volume 100.", "Tame Impala" },
+        { "skipto", "Sam: bot, skip to the Fleetwood Mac one", "Up next: Africa; Dreams; Mr. Brightside. Volume 100.", "Fleetwood Mac" },
+        { "skipto", "Sam: bot go to number two", "Up next: Africa; Dreams; Mr. Brightside. Volume 100.", "2" },
+        { "volume", "Sam: Ganabot, turn it up.", "Now playing: Dreams by Fleetwood Mac. Volume 20.", "+20" },
+        { "volume", "Regan: bot can you turn it down to seventy-five", "Volume 120.", "75" },
+        { "volume", "Sam: Gunnabot quieter please, way quieter", "Volume 90.", "-40" },
+        { "volume", "Regan: robot, up by ten", "Volume 60.", "+10" },
+    };
+
+    /** Asks the chat model what a command needs: the song, the station or the new volume. */
+    String args(String command, String line, String player) throws IOException, InterruptedException
+    {
+        JSONArray messages = new JSONArray().put(message("system", ARGS_SYSTEM));
+        for (String[] ex : ARGS_EXAMPLES)
+        {
+            messages.put(message("user", "Command: " + ex[0] + "\nLine: " + ex[1] + "\nPlayer: " + ex[2]));
+            messages.put(message("assistant", new JSONObject().put("args", ex[3]).toString()));
+        }
+        messages.put(message("user", "Command: " + command + "\nLine: " + line + "\nPlayer: " + player));
+        String c = complete(messages, 48).replaceAll("(?s)<think>.*?</think>", "");
+        int start = c.indexOf('{'), end = c.lastIndexOf('}');
+        if (start < 0 || end <= start)
+            throw new JSONException("no JSON in: " + c);
+        return new JSONObject(c.substring(start, end + 1)).optString("args", "").trim();
+    }
+
+    private static final Pattern VOLUME_NOW = Pattern.compile("Volume (\\d+)\\.");
+    private static final Pattern VOLUME_ASKED = Pattern.compile("([+-])?\\s*(\\d{1,3})\\s*%?");
+
+    /**
+     * The args if the command can run with them, or null if it can't. A volume
+     * comes back as the number to set: small models are poor at sums, so the
+     * chat model says "+20" and the adding is done here.
+     * @param player the player state, which ends with the volume now
+     */
+    static String checkArgs(String command, String args, String player)
+    {
+        switch (command)
+        {
+            case "volume":
+                Matcher asked = VOLUME_ASKED.matcher(args);
+                if (!asked.matches())
+                    return null;
+                int n = Integer.parseInt(asked.group(2));
+                if (asked.group(1) == null)
+                    return n <= 150 ? String.valueOf(n) : null;
+                Matcher now = VOLUME_NOW.matcher(player);
+                if (!now.find())
+                    return null;
+                int volume = Integer.parseInt(now.group(1)) + (asked.group(1).equals("-") ? -n : n);
+                return String.valueOf(Math.max(0, Math.min(150, volume)));
+            case "mix":
+                return args; // empty means like what's playing
+            default:
+                return args.isEmpty() ? null : args;
+        }
     }
 
     /**
      * On OpenRouter, sends a second copy if the first hasn't answered in
-     * HEDGE_AFTER_MS and takes whichever answers first: now and then a host
+     * hedgeAfterMs and takes whichever answers first: now and then a host
      * stalls for 7-9 s on a request it normally answers in one. A local
      * server gets one request, since a copy would only queue behind it.
      */
-    private HttpResponse<String> send(HttpRequest request) throws IOException, InterruptedException
+    private HttpResponse<String> send(HttpRequest request, long hedgeAfterMs) throws IOException, InterruptedException
     {
         CompletableFuture<HttpResponse<String>> first = sendRetrying(request);
         if (!openRouter)
             return await(first);
         try
         {
-            return first.get(HEDGE_AFTER_MS, TimeUnit.MILLISECONDS);
+            return first.get(hedgeAfterMs, TimeUnit.MILLISECONDS);
         }
         catch (TimeoutException e)
         {

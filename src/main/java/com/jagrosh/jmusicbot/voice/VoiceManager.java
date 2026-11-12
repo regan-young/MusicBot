@@ -62,8 +62,9 @@ import org.slf4j.LoggerFactory;
  * was said to the bot and which command it maps to. Commands run through the
  * bot's real commands (?play, ?radio, ...) via {@link VoiceCommandEvent};
  * anything else goes to the conversational LLM ({@link LlmClient}) and the
- * reply is spoken. Saying one of the bot's names always counts as talking to
- * it. Transcripts and replies are logged rather than posted.
+ * reply is spoken. Saying one of the bot's names counts as talking to it,
+ * unless the router is sure it wasn't ("going bot" is a Dota lane).
+ * Transcripts and replies are logged rather than posted.
  */
 public class VoiceManager
 {
@@ -329,7 +330,9 @@ public class VoiceManager
         // the router can share the chat LLM's key (both OpenRouter, say)
         String routerKey = config.getRouterKey() == null || config.getRouterKey().isBlank() ? key : config.getRouterKey();
         this.router = routerUrl == null || routerUrl.isBlank() ? null
-                : new VoiceRouter(routerUrl, routerKey, config.getRouterModel());
+                : new VoiceRouter(routerUrl, routerKey, config.getRouterModel(), config.getRouterDecisionModel());
+        if (router != null)
+            LOG.info("Voice lines are routed by {}", router.describe());
         this.smartTurn = loadSmartTurn(config.getSmartTurnModel());
         // web search is an OpenRouter server tool
         this.researcher = llm == null || !config.getLlmApi().contains("openrouter.ai") ? null
@@ -1057,7 +1060,7 @@ public class VoiceManager
             // as by voice, the router hears "explicit mode on/off" and "tone it down"
             try
             {
-                VoiceRouter.Route route = router.route(List.of(name + ": " + text), false, player,
+                VoiceRouter.Route route = router.command(List.of(name + ": " + text), false, player,
                         mood == null ? null : mood.spicy(), crude == null ? null : crude.spicy());
                 boolean repeat = VoiceRouter.isRepeat(route.command, route.args, text, mood == null ? null : mood.spicy(),
                         crude == null ? null : crude.spicy(), -1);
@@ -1442,15 +1445,17 @@ public class VoiceManager
             }
             routerMs = System.currentTimeMillis() - t;
         }
+        // the router's verdict, weighed against the name and whether the bot was just talking to them
+        boolean wanted = VoiceRouter.forBot(route, named, followUp);
         // a repeat of the last command: talk if it's clearly said to the bot, otherwise not for the bot at all
-        boolean repeat = route != null && route.toBot && (VoiceRouter.isRepeat(route.command, route.args, said,
+        boolean repeat = wanted && route != null && route.toBot && (VoiceRouter.isRepeat(route.command, route.args, said,
                 session.adultConversation == null ? null : session.mood.spicy(),
                 session.crudeConversation == null ? null : session.crude.spicy(), handler.getVolume())
                 || (!named && VoiceRouter.sameAsLast(route.command, route.args, session.lastCommand, session.lastArgs,
                         System.currentTimeMillis() - session.lastCommandAt)));
         if (repeat)
             LOG.info("Ignored {} from the router as a repeat: {}", route.command, said);
-        boolean toBot = named || (route != null && route.toBot && (!repeat || followUp));
+        boolean toBot = wanted && (!repeat || named || followUp);
         // named but the router saw no command: treat it as talk
         String command = !toBot ? "none" : route == null || !route.toBot || repeat ? "chat" : route.command;
         if (chat != null && !command.equals("chat"))
@@ -1460,11 +1465,12 @@ public class VoiceManager
         }
         if (!toBot)
         {
-            LOG.info("Heard {} ({}, router {} ms), not for the bot: {}", name, heard, routerMs, said);
+            LOG.info("Heard {} ({}, router {} ms{}), not for the bot{}: {}", name, heard, routerMs, sureness(route),
+                    named ? " despite the name" : "", said);
             return;
         }
         String args = route == null ? "" : route.args;
-        LOG.info("Heard {} ({}, router {} ms){}: {} -> {} [{}]", name, heard, routerMs, how, said, command, args);
+        LOG.info("Heard {} ({}, router {} ms{}){}: {} -> {} [{}]", name, heard, routerMs, sureness(route), how, said, command, args);
         if (command.equals("not_you"))
         {
             notYou(guild, session, name, said, heardAt);
@@ -1908,6 +1914,12 @@ public class VoiceManager
         if (cut > 0 && cut < 160)
             s = s.substring(0, cut + 1);
         return s.length() > 160 ? s.substring(0, 157) + "..." : s;
+    }
+
+    /** How sure the router was that a line was for the bot, for the log; empty if it only says yes or no. */
+    private static String sureness(VoiceRouter.Route route)
+    {
+        return route == null || !route.scored ? "" : String.format(java.util.Locale.ROOT, ", %.2f for the bot", route.confidence);
     }
 
     /** One line describing the player for the router and LLM. */
