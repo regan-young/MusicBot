@@ -75,7 +75,7 @@ public class Rice
         {
             sb.append("\n").append(frontPage(new JSONObject(get("/api/mailer/front-page?region=NI"))));
         }
-        catch (IOException e)
+        catch (IOException | org.json.JSONException e)
         {
             // the mailer comes from a third party; the rest still answers most questions
             LOG.warn("Could not get New World's mailer front page", e);

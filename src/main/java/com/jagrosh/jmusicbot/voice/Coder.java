@@ -56,6 +56,7 @@ public class Coder
     static final Path WHITELIST = Path.of("coders.json");
     static final Path RESTART = Path.of("restart.json");
     private static final long POLL_SECONDS = 15;
+    private static final long FOLLOW_MAX_MS = 3 * 3600_000L;
     // answers are for a live conversation, so they're checked on often
     private static final long ASK_POLL_MS = 3000;
     private static final long ASK_TIMEOUT_MS = 6 * 60_000;
@@ -226,14 +227,7 @@ public class Coder
 
     private void save()
     {
-        try
-        {
-            Files.writeString(whitelistFile, whitelist.toString(2), StandardCharsets.UTF_8);
-        }
-        catch (IOException e)
-        {
-            LOG.warn("Could not write {}", whitelistFile, e);
-        }
+        JsonFile.save(whitelistFile, whitelist.toString(2), LOG);
     }
 
     // ------------------------------------------------------------------ requests
@@ -270,16 +264,24 @@ public class Coder
         LOG.info("Coding task {} for {}: {}", id, requester.getEffectiveName(), task);
         AtomicReference<ScheduledFuture<?>> poll = new AtomicReference<>();
         AtomicReference<String> seen = new AtomicReference<>("");
-        poll.set(ticker.scheduleWithFixedDelay(() -> follow(id, seen, poll, updates, onDeploy),
+        long started = System.currentTimeMillis();
+        poll.set(ticker.scheduleWithFixedDelay(() -> follow(id, started, seen, poll, updates, onDeploy),
                 POLL_SECONDS, POLL_SECONDS, TimeUnit.SECONDS));
         String lead = holding == null || holding.isBlank() ? "On it." : holding;
         return ahead > 0 ? lead + " There's " + (ahead == 1 ? "one change" : ahead + " changes") + " ahead of it." : lead;
     }
 
     /** One poll of a task: reports when it reaches a new state, and stops when it's finished. */
-    private void follow(String id, AtomicReference<String> seen, AtomicReference<ScheduledFuture<?>> poll, Updates updates,
-            java.util.function.Consumer<String> onDeploy)
+    private void follow(String id, long started, AtomicReference<String> seen, AtomicReference<ScheduledFuture<?>> poll,
+            Updates updates, java.util.function.Consumer<String> onDeploy)
     {
+        // the sidecar keeps tasks in memory, so one it lost in a restart never finishes
+        if (System.currentTimeMillis() - started > FOLLOW_MAX_MS)
+        {
+            LOG.warn("Coding task {} hasn't finished after {} hours; no longer watching it", id, FOLLOW_MAX_MS / 3600_000);
+            stop(poll);
+            return;
+        }
         JSONObject t;
         try
         {

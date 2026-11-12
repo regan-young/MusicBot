@@ -634,10 +634,14 @@ public class VoiceRouter
                 int n = Integer.parseInt(asked.group(2));
                 if (asked.group(1) == null)
                     return n <= 150 ? String.valueOf(n) : null;
+                // the line ends with the volume; a song called "Hits Volume 2." comes before it
                 Matcher now = VOLUME_NOW.matcher(player);
-                if (!now.find())
+                String current = null;
+                while (now.find())
+                    current = now.group(1);
+                if (current == null)
                     return null;
-                int volume = Integer.parseInt(now.group(1)) + (asked.group(1).equals("-") ? -n : n);
+                int volume = Integer.parseInt(current) + (asked.group(1).equals("-") ? -n : n);
                 return String.valueOf(Math.max(0, Math.min(150, volume)));
             case "mix":
                 return args; // empty means like what's playing
@@ -754,4 +758,17 @@ public class VoiceRouter
             "stop", "Stopping the music.",
             "volume", "Volume %s.",
             "shuffle", "Shuffled.");
+
+    /**
+     * What the bot says as a command runs, or null for the commands that say
+     * their own piece. A song from the play history is asked for by its URL,
+     * which is no good read out.
+     */
+    static String ack(String command, String args)
+    {
+        String ack = ACKS.get(command);
+        if (ack == null)
+            return null;
+        return args.matches("(?i)https?://\\S+") ? "Queuing that up again." : String.format(ack, args);
+    }
 }

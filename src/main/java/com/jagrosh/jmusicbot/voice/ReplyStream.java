@@ -32,7 +32,7 @@ class ReplyStream
     // a sentence ends at . ! or ? (and any closing quote or bracket) followed by a space,
     // but not after a title like "Mr." in "Mr. Brightside"
     private static final Pattern END = Pattern.compile("(?<!\\b(?:Mr|Mrs|Ms|Dr|St|vs))[.!?]+[\"')\\]]*\\s");
-    // a sentence shorter than this joins the next, as in VoiceManager.sentences
+    // a sentence shorter than this joins the next, as in SpokenText.sentences
     static final int MIN_SENTENCE = 24;
 
     private final Consumer<String> onSentence;

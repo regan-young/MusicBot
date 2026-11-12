@@ -125,7 +125,7 @@ public class RouterBench
         Boolean crude = c.isNull("crude") ? null : c.getBoolean("crude");
         Matcher m = VOLUME.matcher(player);
         int volume = m.find() ? Integer.parseInt(m.group(1)) : 100;
-        if (!named && !followUp && VoiceManager.isReaction(said))
+        if (!named && !followUp && SpokenText.isReaction(said))
             return new Result(c, "none", "", Double.NaN, 0, null);
         long t = System.currentTimeMillis();
         VoiceRouter.Route route;

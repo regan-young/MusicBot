@@ -72,8 +72,8 @@ public class VoiceRouterTest
     @Test
     public void errorRepliesBecomeSpeakable()
     {
-        assertEquals("No results found for xyz!", VoiceManager.spokenReply("❌ No results found for `xyz`!"));
-        assertEquals("You must be listening in to use that!", VoiceManager.spokenReply("❌ You must be listening in <#123456> to use that!").replace("  ", " "));
+        assertEquals("No results found for xyz!", SpokenText.spokenReply("❌ No results found for `xyz`!"));
+        assertEquals("You must be listening in to use that!", SpokenText.spokenReply("❌ You must be listening in <#123456> to use that!").replace("  ", " "));
     }
 
     private static org.json.JSONObject decision(double toBot, String choice, double sure, double none)
@@ -192,5 +192,21 @@ public class VoiceRouterTest
     {
         assertEquals("qwen", new VoiceRouter("http://192.168.0.147:1235", "", "qwen", "google/gemini-decision-1").describe());
         assertEquals("google/gemma-3-12b-it", new VoiceRouter("https://openrouter.ai/api", "k", "google/gemma-3-12b-it", "").describe());
+    }
+
+    @Test
+    public void theVolumeNowIsTheLastOneInThePlayerLine()
+    {
+        String player = "Now playing: Guardians of the Galaxy Awesome Mix Volume 2. by Various. Up next: Hits Volume 3. Volume 60.";
+        assertEquals("80", VoiceRouter.checkArgs("volume", "+20", player));
+    }
+
+    @Test
+    public void aLinkIsNeverReadOut()
+    {
+        assertEquals("Queuing up Dreams.", VoiceRouter.ack("play", "Dreams"));
+        assertEquals("Queuing that up again.", VoiceRouter.ack("play", "https://www.youtube.com/watch?v=mrZRURcb1cM"));
+        assertEquals("Skipping.", VoiceRouter.ack("skip", ""));
+        assertNull(VoiceRouter.ack("pause", ""));
     }
 }

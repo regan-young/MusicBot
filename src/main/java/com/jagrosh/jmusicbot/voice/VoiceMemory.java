@@ -13,11 +13,9 @@
  */
 package com.jagrosh.jmusicbot.voice;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -122,15 +120,6 @@ public class VoiceMemory
 
     private void save()
     {
-        try
-        {
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.writeString(tmp, people.toString(2), StandardCharsets.UTF_8);
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        }
-        catch (IOException e)
-        {
-            LOG.warn("Could not save {}", file, e);
-        }
+        JsonFile.save(file, people.toString(2), LOG);
     }
 }

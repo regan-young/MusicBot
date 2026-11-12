@@ -13,11 +13,9 @@
  */
 package com.jagrosh.jmusicbot.voice;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import org.json.JSONObject;
 import org.slf4j.Logger;
@@ -33,7 +31,7 @@ import org.slf4j.LoggerFactory;
 public class LastSeen
 {
     private static final Logger LOG = LoggerFactory.getLogger(LastSeen.class);
-    /** Writes for the same person closer together than this wait for the next event. */
+    /** The file is written at most this often; what's newer is written with the next event after that. */
     static final long SAVE_EVERY_MS = 60_000;
 
     /** What someone was last seen doing, and when. */
@@ -47,6 +45,7 @@ public class LastSeen
 
     private final Path file;
     private final JSONObject people; // user id -> {"name", "message", "voice"} (epoch millis)
+    private long savedAt;
 
     public LastSeen(Path file)
     {
@@ -85,10 +84,14 @@ public class LastSeen
             person = new JSONObject();
             people.put(key, person);
         }
-        long previous = Math.max(person.optLong("message", 0), person.optLong("voice", 0));
         person.put("name", name).put(kind, now);
-        if (now - previous >= SAVE_EVERY_MS)
+        // by the time since the last write, not since this person's last event:
+        // someone chatting steadily was never a minute apart, so was never saved
+        if (now - savedAt >= SAVE_EVERY_MS)
+        {
             save();
+            savedAt = now;
+        }
     }
 
     public synchronized Seen byId(long userId)
@@ -114,6 +117,28 @@ public class LastSeen
                 best = seen;
         }
         return best;
+    }
+
+    /**
+     * When people were last around, most recent first, for the chat LLM:
+     * "gunna 3 hours ago, Sam 2 days ago".
+     * @param except people to leave out (those in the voice channel now)
+     * @param limit how many people at most
+     */
+    public synchronized String describe(long now, java.util.Collection<Long> except, int limit)
+    {
+        java.util.List<Seen> seen = new java.util.ArrayList<>();
+        for (String key : people.keySet())
+        {
+            Seen s = toSeen(key, people.getJSONObject(key));
+            if (!except.contains(s.userId()) && s.latest() > 0)
+                seen.add(s);
+        }
+        seen.sort(java.util.Comparator.comparingLong(Seen::latest).reversed());
+        StringBuilder sb = new StringBuilder();
+        for (Seen s : seen.subList(0, Math.min(limit, seen.size())))
+            sb.append(sb.length() == 0 ? "" : ", ").append(s.name()).append(' ').append(ago(now - s.latest()));
+        return sb.toString();
     }
 
     /** Forgets a person, e.g. when they ask to be forgotten. */
@@ -151,15 +176,6 @@ public class LastSeen
 
     private void save()
     {
-        try
-        {
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.writeString(tmp, people.toString(2), StandardCharsets.UTF_8);
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        }
-        catch (IOException e)
-        {
-            LOG.warn("Could not save {}", file, e);
-        }
+        JsonFile.save(file, people.toString(2), LOG);
     }
 }

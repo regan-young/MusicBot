@@ -105,10 +105,10 @@ public class VoiceCommandTest
     public void sentencesForSpeech()
     {
         assertEquals(List.of("Why do musicians hate elevators?", "Because they can't stand the ups and downs."),
-                VoiceManager.sentences("Why do musicians hate elevators? Because they can't stand the ups and downs."));
+                SpokenText.sentences("Why do musicians hate elevators? Because they can't stand the ups and downs."));
         // short sentences join the next one, and titles don't end a sentence
-        assertEquals(List.of("Sure. Queuing Mr. Brightside now."), VoiceManager.sentences("Sure. Queuing Mr. Brightside now."));
-        assertEquals(List.of("Yes?"), VoiceManager.sentences("Yes?"));
+        assertEquals(List.of("Sure. Queuing Mr. Brightside now."), SpokenText.sentences("Sure. Queuing Mr. Brightside now."));
+        assertEquals(List.of("Yes?"), SpokenText.sentences("Yes?"));
     }
 
     @Test

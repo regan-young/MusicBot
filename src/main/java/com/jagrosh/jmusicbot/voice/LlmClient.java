@@ -109,6 +109,10 @@ public class LlmClient
             + "someone change your code and revoke_coder to stop them (query = that person's name), and list_coders "
             + "when they ask who can. If they also tell you to go ahead with a change, such as that person's request "
             + "from the conversation, use allow_coder with task = that change, written as for code. "
+            + "The actions above are all you can do. You can't message or DM anyone, pass something on to "
+            + "someone later, see who's online, or do anything after this reply unless an action does it: when asked "
+            + "for one of those, say plainly that you can't, and never promise to. When someone was last around is "
+            + "in the context, for the people you've seen; answer from that, and say so if they aren't there. "
             + "People call you Gunnabot, bot, robot or clanker. Every message you see was said to you, though not "
             + "always by name; the recent channel conversation in the context shows what they're responding to.";
 
@@ -208,16 +212,13 @@ public class LlmClient
         public final String query, task, remember, post, reply;
         /** For a reminder: minutes from now. */
         public final double minutes;
-        /** How many sentences of the reply were already spoken while it streamed in. */
-        public final int streamed;
-
         Decision(VoiceCommand.Type action, String query, String reply)
         {
-            this(action, query, "", 0, "", "", reply, 0);
+            this(action, query, "", 0, "", "", reply);
         }
 
         Decision(VoiceCommand.Type action, String query, String task, double minutes, String remember, String post,
-                String reply, int streamed)
+                String reply)
         {
             this.action = action;
             this.query = query;
@@ -226,12 +227,6 @@ public class LlmClient
             this.remember = remember;
             this.post = post;
             this.reply = reply;
-            this.streamed = streamed;
-        }
-
-        Decision withStreamed(int sentences)
-        {
-            return new Decision(action, query, task, minutes, remember, post, reply, sentences);
         }
     }
 
@@ -319,8 +314,7 @@ public class LlmClient
                         while (history.size() > HISTORY_MESSAGES)
                             history.removeFirst();
                     }
-                    Decision d = parseDecision(content);
-                    return d.withStreamed(reply.sentences());
+                    return parseDecision(content);
                 }
                 catch (IOException | UncheckedIOException e)
                 {
@@ -454,7 +448,7 @@ public class LlmClient
             case "list_coders":  action = VoiceCommand.Type.LIST_CODERS; break;
             default:       action = VoiceCommand.Type.CHAT;
         }
-        return new Decision(action, query, task, minutes, remember, post, reply, 0);
+        return new Decision(action, query, task, minutes, remember, post, reply);
     }
 
     /** Strips markdown and emoji so the reply reads cleanly through text-to-speech. */

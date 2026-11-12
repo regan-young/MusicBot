@@ -13,11 +13,9 @@
  */
 package com.jagrosh.jmusicbot.voice;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -141,17 +139,8 @@ public class Reminders
 
     private void save()
     {
-        try
-        {
-            JSONArray out = new JSONArray();
-            pending.forEach(r -> out.put(r.toJson()));
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.writeString(tmp, out.toString(2), StandardCharsets.UTF_8);
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        }
-        catch (IOException e)
-        {
-            LOG.warn("Could not save {}", file, e);
-        }
+        JSONArray out = new JSONArray();
+        pending.forEach(r -> out.put(r.toJson()));
+        JsonFile.save(file, out.toString(2), LOG);
     }
 }

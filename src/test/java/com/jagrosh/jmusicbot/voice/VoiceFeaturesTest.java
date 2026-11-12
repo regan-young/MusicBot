@@ -18,15 +18,15 @@ public class VoiceFeaturesTest
     {
         List<String> said = List.of("The All Blacks won 43-21 in Sydney.", "I've posted the details in the chat.");
         // Parakeet hearing the bot through someone's speakers
-        assertTrue(VoiceManager.isEcho("the All Blacks won 43 21 in Sydney", said));
-        assertTrue(VoiceManager.isEcho("posted the details in the chat", said));
+        assertTrue(SpokenText.isEcho("the All Blacks won 43 21 in Sydney", said));
+        assertTrue(SpokenText.isEcho("posted the details in the chat", said));
         // people talking about it, or asking for more
-        assertFalse(VoiceManager.isEcho("wait who did the All Blacks play", said));
-        assertFalse(VoiceManager.isEcho("play some Fleetwood Mac", said));
-        assertFalse(VoiceManager.isEcho("anything", List.of()));
+        assertFalse(SpokenText.isEcho("wait who did the All Blacks play", said));
+        assertFalse(SpokenText.isEcho("play some Fleetwood Mac", said));
+        assertFalse(SpokenText.isEcho("anything", List.of()));
         // one word: only if the bot said exactly that
-        assertTrue(VoiceManager.isEcho("Yes?", List.of("Yes?")));
-        assertFalse(VoiceManager.isEcho("Sydney", said));
+        assertTrue(SpokenText.isEcho("Yes?", List.of("Yes?")));
+        assertFalse(SpokenText.isEcho("Sydney", said));
     }
 
     @Test
@@ -83,9 +83,9 @@ public class VoiceFeaturesTest
     {
         // misrouted as stop, hush or chat on 2026-10-17
         for (String s : List.of("Holy shit.", "Oh my god.", "Yeah.", "Ooh.", "Um", "Yeah yeah yeah.", "Oh wow.", "Ha ha ha."))
-            assertTrue(s, VoiceManager.isReaction(s));
+            assertTrue(s, SpokenText.isReaction(s));
         for (String s : List.of("Stop the music", "Oh thank god the interrupt's working now.", "yeah play some Six60", "SHUT UP"))
-            assertFalse(s, VoiceManager.isReaction(s));
+            assertFalse(s, SpokenText.isReaction(s));
     }
 
     @Test
