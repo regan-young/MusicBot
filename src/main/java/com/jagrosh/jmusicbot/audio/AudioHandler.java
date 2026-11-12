@@ -27,6 +27,7 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
+import com.jagrosh.jmusicbot.data.BotDatabase;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -70,6 +71,8 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public record Played(String title, String author, String uri, String requester, boolean radio, long time) {}
     private static final int HISTORY = 20;
     private final Deque<Played> history = new ArrayDeque<>(); // newest first
+    // the playing track's row in the database, or 0
+    private long playId;
 
     private boolean karaoke;
     private byte[] lastFrame;
@@ -81,6 +84,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         this.audioPlayer = player;
         this.speaker = new VoiceSpeaker(voicePlayer);
         this.guildId = guild.getIdLong();
+        // what played before the last restart, so "play that again" still knows
+        BotDatabase db = manager.getBot().getDatabase();
+        if (db != null)
+            for (BotDatabase.Play p : db.recentPlays(guildId, HISTORY))
+                history.addLast(new Played(p.title(), p.author(), p.uri(), p.requester(), p.radio(), p.startedAt()));
 
         this.setQueueType(manager.getBot().getSettingsManager().getSettings(guildId).getQueueType());
     }
@@ -238,6 +246,13 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     @Override
     public void onTrackEnd(AudioPlayer player, AudioTrack track, AudioTrackEndReason endReason) 
     {
+        BotDatabase db = manager.getBot().getDatabase();
+        if (db != null && playId != 0)
+        {
+            // how far in it ended is what tells a skip from a song heard out
+            db.playEnded(playId, endReason.name().toLowerCase(java.util.Locale.ROOT), track.getPosition(), System.currentTimeMillis());
+            playId = 0;
+        }
         RepeatMode repeatMode = manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode();
         // if the track ended normally, and we're in repeat mode, re-add it to the queue
         if(endReason==AudioTrackEndReason.FINISHED && repeatMode != RepeatMode.OFF)
@@ -290,6 +305,13 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         String requester = rm == null || rm.user == null ? null : rm.user.username;
         Played played = new Played(label != null ? label : track.getInfo().title, label != null ? null : track.getInfo().author,
                 track.getInfo().uri, requester, label != null, System.currentTimeMillis());
+        BotDatabase db = manager.getBot().getDatabase();
+        if (db != null)
+        {
+            playId = db.nextId();
+            db.playStarted(playId, guildId, new BotDatabase.Play(played.title(), played.author(), played.uri(), played.radio(),
+                    track.getDuration(), rm == null || rm.user == null ? 0 : rm.user.id, requester, played.time()));
+        }
         synchronized (history)
         {
             // a repeated track (repeat mode) is one entry, moved to the front
@@ -300,7 +322,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         }
     }
 
-    /** What's played in this guild since the bot started, newest first (the first may be playing now). */
+    /** The last tracks played in this guild, newest first (the first may be playing now). */
     public List<Played> getHistory()
     {
         synchronized (history)

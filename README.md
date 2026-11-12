@@ -61,6 +61,7 @@ Every setting is documented where its default lives, in [`src/main/resources/ref
 | `nsfwllm*`, `crudellmprompt` | Explicit mode (age-restricted channels only) and crude mode. |
 | `coderapi`, `coderkey` | The self-editing sidecar in [`coder/`](coder). |
 | `riceapi` | The supermarket specials tracker. |
+| `database`, `databasespeechdays` | The history database, and how long what people said is kept in it. See below. |
 | `timezone`, `postchannels`, `musicgain`, `mixsongs`, `ytdlppath` | Clock for reminders, where the bot may post, music level under speech, mix size, and where `yt-dlp` is. |
 
 ## Files the bot keeps
@@ -70,11 +71,32 @@ All in its working directory, next to `config.txt`:
 | File | Contents |
 |---|---|
 | `serversettings.json` | Per-server settings (JMusicBot). |
+| `gunnabot.db` | The history database: what was played, said and asked for. See below. |
 | `voice-memory.json` | Facts people have told the bot about themselves. "Forget me" removes a person's. |
 | `voice-reminders.json` | Reminders that have not come due. |
 | `last-seen.json` | When each person last typed or was in voice. |
 | `voice-feedback.jsonl` | Lines the bot answered that someone then said were not for it ("not you, bot"). |
 | `coders.json`, `restart.json` | The self-edit whitelist, and a note that brings the bot back to its voice channel after it deploys itself. |
+
+## The history database
+
+The JSON files above hold what the bot knows now. `gunnabot.db`, an SQLite file, holds what happened, so it can be asked about. It is written off the threads that play and listen, and the bot runs without it if it cannot be opened.
+
+| Table | A row for | Used for |
+|---|---|---|
+| `plays` | Each track started: who asked, when, how it ended and how far in. | "Play that again" after a restart, questions like "what was on last Friday", and picking songs people here like. |
+| `voice_lines`, `bot_lines` | Each line heard in `?chat` with its transcript, timings, the router's score and the outcome; and each sentence the bot said. | Measuring the router and the speech recognition over time. |
+| `corrections` | A line the bot answered that someone said was not for it. | The router's error rate, and new benchmark cases. |
+| `reference_transcripts` | A better transcript of a line from another model. | Measuring speech recognition per person. Nothing writes to it yet. |
+| `code_requests` | Each change or question sent to the self-edit sidecar, and how it went. | A record of who asked for what. |
+
+Three views summarise them: `play_counts`, `router_daily` (lines heard, taken for the bot, corrected, and average timings per day) and `stt_by_person`.
+
+```
+sqlite3 gunnabot.db "SELECT day, lines, for_bot, corrections, avg_router_ms FROM router_daily ORDER BY day DESC LIMIT 14"
+```
+
+A song counts as cut short when it was skipped or stopped in its first half. What people said is personal: `databasespeechdays` drops it after that many days, and asking the bot to forget you removes your lines and takes your name off what you played.
 
 ## Session recordings
 

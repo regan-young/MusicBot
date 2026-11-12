@@ -50,10 +50,10 @@ public class LlmClient
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
             + "only a JSON object, no other text, with the keys in this order: {\"action\": one of \"play\", \"radio\", "
             + "\"mix\", \"skip\", \"skipto\", \"pause\", \"resume\", \"stop\", \"research\", \"remind\", \"cancel_reminders\", "
-            + "\"forget\", \"specials\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
+            + "\"forget\", \"specials\", \"history\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
             + "search for (play, radio and mix), the song's name or its number in the queue as digits (skipto), the product they're asking about (specials), or the person's name "
             + "(allow_coder and revoke_coder), otherwise empty; "
-            + "\"task\": for research, remind, introspect and code only (and allow_coder, when a change is asked for too), otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
+            + "\"task\": for research, remind, history, introspect and code only (and allow_coder, when a change is asked for too), otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
             + "usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
             + "out loud}. "
             + "Use play when they want a song, artist or album played or queued (query = what to search YouTube for), "
@@ -93,6 +93,11 @@ public class LlmClient
             + "Use specials when they ask about supermarket or grocery specials, deals or what's cheap this week "
             + "(Pak'nSave, New World, Woolworths, or New World's mailer): query = the product they're after, or empty "
             + "for the best deals overall, and reply = a short holding line; the deals are looked up for you. "
+            + "Use history when they ask about music played here in the past and the answer isn't in Played earlier "
+            + "or the favourites in the context: what was on some day or night, who played what, what's played "
+            + "most, what someone tends to ask for, how often a song has been on. task = the question, "
+            + "self-contained, and reply = a short holding line; the play history is looked up for you. The favourites "
+            + "in the context are there for picking music people here like, when the choice is yours. "
             + "Use introspect when they ask how you work inside, how you were built or why you behave a certain way, "
             + "and a precise answer needs your own source code (what you know about yourself is only a summary), "
             + "and also when they ask why you're slow, laggy or broken right now, why you didn't hear or answer "
@@ -124,7 +129,7 @@ public class LlmClient
                     .put("properties", new JSONObject()
                             .put("action", new JSONObject().put("type", "string").put("enum", new JSONArray()
                                     .put("play").put("radio").put("mix").put("skip").put("skipto").put("pause").put("resume").put("stop")
-                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("specials").put("introspect").put("code")
+                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("specials").put("history").put("introspect").put("code")
                                     .put("allow_coder").put("revoke_coder").put("list_coders").put("chat")))
                             .put("query", new JSONObject().put("type", "string"))
                             .put("task", new JSONObject().put("type", "string"))
@@ -441,6 +446,7 @@ public class LlmClient
             case "cancel_reminders": action = VoiceCommand.Type.CANCEL_REMINDERS; break;
             case "forget": action = VoiceCommand.Type.FORGET; break;
             case "specials": action = VoiceCommand.Type.SPECIALS; break;
+            case "history": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.MUSIC_HISTORY; break;
             case "introspect": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.INTROSPECT; break;
             case "code":   action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.CODE; break;
             case "allow_coder":  action = VoiceCommand.Type.ALLOW_CODER; break;

@@ -20,6 +20,7 @@ import com.jagrosh.jmusicbot.BotConfig;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.commands.DJCommand;
+import com.jagrosh.jmusicbot.data.BotDatabase;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
@@ -140,7 +141,7 @@ public class VoiceManager
 
     /** The last line the bot acted on, kept for "not you, bot" feedback. */
     private record Answer(long time, String speaker, String line, String command, String args, boolean named,
-            boolean followUp, List<String> conversation) {}
+            boolean followUp, List<String> conversation, long lineId, long userId) {}
 
     /**
      * Explicit mode, in an age-restricted channel only, or crude mode, anywhere.
@@ -178,6 +179,8 @@ public class VoiceManager
 
     private static class Session
     {
+        // also the session's id in the database
+        final long startedAt = System.currentTimeMillis();
         final MessageChannel channel;
         final VoiceListener listener;
         final ScheduledFuture<?> poller;
@@ -290,6 +293,8 @@ public class VoiceManager
     private final ZoneId zone;
     // where ?chat sessions are saved, or empty; and the speech model, to label them with
     private final String recordings, sttModel;
+    // the bot's history, or null
+    private final BotDatabase database;
     // conversations with the bot by text (@mentions), per channel
     private final Map<Long, LlmClient.Conversation> textConversations = new ConcurrentHashMap<>();
     private final Map<Long, LlmClient.Conversation> textAdultConversations = new ConcurrentHashMap<>();
@@ -345,7 +350,12 @@ public class VoiceManager
         this.researcher = llm == null || !config.getLlmApi().contains("openrouter.ai") ? null
                 : new Researcher(config.getLlmApi(), key, config.getResearchModel(), persona);
         this.reminders = new Reminders(Path.of("voice-reminders.json"), ticker, this::remind);
-        this.coder = new Coder(config.getCoderApi(), config.getCoderKey(), config.getOwnerId(), ticker);
+        this.database = bot.getDatabase();
+        this.coder = new Coder(config.getCoderApi(), config.getCoderKey(), config.getOwnerId(), ticker).withDatabase(database);
+        int keepDays = config.getDatabaseSpeechDays();
+        if (database != null && keepDays > 0)
+            ticker.scheduleAtFixedRate(() -> database.forgetSpeechBefore(System.currentTimeMillis() - keepDays * 86_400_000L),
+                    1, 24 * 60, TimeUnit.MINUTES);
         this.rice = new Rice(config.getRiceApi());
         String tz = config.getTimezone();
         this.zone = tz == null || tz.isBlank() ? ZoneId.systemDefault() : ZoneId.of(tz);
@@ -514,6 +524,8 @@ public class VoiceManager
                     session.botSaid(part);
                     if (session.recorder != null)
                         session.recorder.bot(BOT_NAME, part);
+                    if (database != null)
+                        database.botLine(guildId, session.startedAt, now, part);
                 }
                 if (heardAt > 0)
                     LOG.info("Spoke in {} ms, {} ms after they stopped talking: {}", now - start, now - heardAt, part);
@@ -660,6 +672,9 @@ public class VoiceManager
         {
             LOG.warn("Misrouted: {} said \"{}\" and the bot took it as {} [{}]{}; {} said: {}", wrong.speaker(), wrong.line(),
                     wrong.command(), wrong.args(), wrong.named() ? " (named)" : wrong.followUp() ? " (follow-up)" : "", name, said);
+            if (database != null)
+                database.correction(guild.getIdLong(), System.currentTimeMillis(), wrong.lineId(), wrong.userId(), wrong.speaker(),
+                        wrong.line(), wrong.command(), wrong.args(), name, said, new org.json.JSONArray(wrong.conversation()).toString());
             org.json.JSONObject entry = new org.json.JSONObject()
                     .put("time", java.time.Instant.ofEpochMilli(wrong.time()).toString())
                     .put("speaker", wrong.speaker()).put("line", wrong.line())
@@ -708,6 +723,51 @@ public class VoiceManager
         return known.isEmpty() ? "" : "What you remember about people here: " + known;
     }
 
+    // favourites are counted over this long, and worked out again this often
+    private static final long TASTE_SINCE_MS = 90 * 86_400_000L, TASTE_FRESH_MS = 5 * 60_000;
+    private record Taste(long at, String text) {}
+    private final Map<String, Taste> tastes = new ConcurrentHashMap<>();
+
+    /**
+     * What this server plays, cuts short, and what the speaker asks for, from
+     * the play history: so "put something on" gets a song people here like.
+     */
+    private String tasteContext(long guildId, long userId, String name)
+    {
+        if (database == null)
+            return "";
+        long now = System.currentTimeMillis();
+        String key = guildId + ":" + userId;
+        Taste known = tastes.get(key);
+        if (known != null && now - known.at() < TASTE_FRESH_MS)
+            return known.text();
+        String text = taste(database.mostPlayed(guildId, now - TASTE_SINCE_MS, 0, 2, 8),
+                database.mostCutShort(guildId, now - TASTE_SINCE_MS, 4),
+                database.mostPlayed(guildId, now - TASTE_SINCE_MS, userId, 1, 5), name);
+        tastes.put(key, new Taste(now, text));
+        return text;
+    }
+
+    static String taste(List<BotDatabase.Count> favourites, List<BotDatabase.Count> cutShort, List<BotDatabase.Count> theirs, String name)
+    {
+        StringBuilder sb = new StringBuilder();
+        if (!favourites.isEmpty())
+            sb.append(" Played most here lately: ").append(tracks(favourites, true)).append('.');
+        if (!cutShort.isEmpty())
+            sb.append(" Often skipped early: ").append(tracks(cutShort, false)).append('.');
+        if (!theirs.isEmpty())
+            sb.append(' ').append(name).append(" has asked for: ").append(tracks(theirs, false)).append('.');
+        return sb.toString();
+    }
+
+    private static String tracks(List<BotDatabase.Count> counts, boolean withTimes)
+    {
+        List<String> out = new ArrayList<>();
+        for (BotDatabase.Count c : counts)
+            out.add(BotDatabase.label(c.title(), c.author()) + (withTimes ? " (" + c.times() + ")" : ""));
+        return String.join("; ", out);
+    }
+
     // how many people's last-seen times the LLM is given
     private static final int LAST_SEEN_IN_CONTEXT = 12;
 
@@ -742,6 +802,8 @@ public class VoiceManager
             case FORGET:
                 memory.forget(member.getIdLong());
                 bot.getLastSeen().forget(member.getIdLong());
+                if (database != null)
+                    database.forget(member.getIdLong());
                 LOG.info("Forgot everything about {}", member.getEffectiveName());
                 return reply.isEmpty() ? "Done. I've forgotten what I knew about you." : reply;
             default:
@@ -878,6 +940,59 @@ public class VoiceManager
                 post(session, o.optString("post"));
             String say = o.optString("say");
             deliver(guild, session, user.getIdLong(), LlmClient.forSpeech(say.isBlank() ? "I've posted this week's deals." : say),
+                    System.currentTimeMillis());
+        });
+    }
+
+    // ------------------------------------------------------------------ what's been played
+
+    // how many of the latest plays the LLM is given to answer from
+    private static final int HISTORY_PLAYS = 150;
+    private static final String HISTORY_TASK = "\n\n%s asked you about the music that's been played in this server: \"%s\". "
+            + "Answer from the play history below and nothing else; if it doesn't say, say so. Times are local. \"Cut "
+            + "short\" means the song was skipped or stopped in its first half. People are named by their Discord "
+            + "usernames, which may differ a little from what they're called. ";
+    private static final String HISTORY_SPOKEN = "Reply with only a JSON object: {\"say\": two or three short spoken "
+            + "sentences that answer it, no lists, URLs or emoji, \"post\": a short Discord message with the songs, "
+            + "one per line, when there are more than three to name, otherwise empty}.";
+    private static final String HISTORY_TEXT = "Reply with only a JSON object: {\"say\": \"\", \"post\": your answer as "
+            + "a Discord message: a short line, then the songs one per line if there are several; markdown welcome, up to "
+            + "about fifteen lines}.";
+
+    /** Looks back through what's been played and has the LLM answer from it, as {"say", "post"}. */
+    private CompletableFuture<org.json.JSONObject> historyAnswer(String name, String question, long guildId, boolean spoken)
+    {
+        if (database == null || llm == null)
+            return CompletableFuture.failedFuture(new IllegalStateException("there's no database"));
+        return CompletableFuture.supplyAsync(() -> database.musicDigest(guildId, System.currentTimeMillis(), zone, HISTORY_PLAYS), llmCalls)
+                .thenCompose(data -> llm.complete(
+                        persona + String.format(HISTORY_TASK, name, question) + (spoken ? HISTORY_SPOKEN : HISTORY_TEXT), data, 700))
+                .thenApply(VoiceManager::parseSpecialsAnswer);
+    }
+
+    /** In ?chat: a holding line, then the answer out loud when there's a gap, with a list posted if it's long. */
+    private void historyInVoice(Guild guild, Session session, User user, String name, String question, String holding, long heardAt)
+    {
+        if (database == null)
+        {
+            speak(guild, "I don't keep a history of what's played, sorry.", heardAt);
+            return;
+        }
+        speak(guild, holding.isEmpty() ? "Let me look back." : holding, heardAt);
+        historyAnswer(name, question, guild.getIdLong(), true).whenComplete((o, e) ->
+        {
+            if (e != null || (o.optString("say").isBlank() && o.optString("post").isBlank()))
+            {
+                LOG.warn("History answer failed: {}", question, e);
+                deliver(guild, session, user.getIdLong(), "Sorry " + name + ", I couldn't look that up just now.",
+                        System.currentTimeMillis());
+                return;
+            }
+            LOG.info("History answer: {} -> {}", question, o.optString("say"));
+            if (!o.optString("post").isBlank())
+                post(session, o.optString("post"));
+            String say = o.optString("say");
+            deliver(guild, session, user.getIdLong(), LlmClient.forSpeech(say.isBlank() ? "I've posted it in the chat." : say),
                     System.currentTimeMillis());
         });
     }
@@ -1109,7 +1224,7 @@ public class VoiceManager
         message.getMentions().getMembers().forEach(m -> people.add(m.getIdLong()));
         String context = TEXT_MODE + " " + timeContext() + " Player: " + player
                 + historyContext(bot.getPlayerManager().setUpHandler(guild).getHistory(), System.currentTimeMillis())
-                + " " + memoryContext(people) + lastSeenContext(List.of());
+                + " " + memoryContext(people) + lastSeenContext(List.of()) + tasteContext(guild.getIdLong(), member.getIdLong(), name);
         channel.sendTyping().queue();
         long start = System.currentTimeMillis();
         conversation.decide(name, text, context, null).whenCompleteAsync((d, e) ->
@@ -1142,6 +1257,20 @@ public class VoiceManager
                 case RESEARCH:
                     textReply(message, reply.isEmpty() ? "Let me look into that." : reply);
                     researchForText(message, member, text, d.task, context);
+                    return;
+                case MUSIC_HISTORY:
+                    channel.sendTyping().queue();
+                    historyAnswer(name, d.task, guild.getIdLong(), false).whenComplete((o, err) ->
+                    {
+                        if (err != null || o.optString("post").isBlank())
+                        {
+                            LOG.warn("History answer failed: {}", d.task, err);
+                            textReply(message, database == null ? "I don't keep a history of what's played, sorry."
+                                    : "Sorry, I couldn't look that up just now.");
+                            return;
+                        }
+                        textReply(message, o.optString("post"));
+                    });
                     return;
                 case SPECIALS:
                     channel.sendTyping().queue();
@@ -1360,6 +1489,9 @@ public class VoiceManager
         // every clip is kept, with what came back for it, even silence and echoes: those are mistakes to learn from too
         SessionRecorder recorder = session.recorder;
         String clip = recorder == null ? null : recorder.heard(heardAt, uid, user.getName(), name, wav, text, audioMs, sttMs, echo);
+        long lineId = database == null ? 0 : database.nextId();
+        if (database != null)
+            database.lineHeard(lineId, guildId, session.startedAt, heardAt, uid, name, text, audioMs, sttMs, sttModel, clip, echo);
         // they talked over the bot: if it was really them, it stops; if it
         // was its own voice through their speakers, it carries on
         endTalkOver(guild, session, uid, !text.isBlank() && !echo);
@@ -1400,16 +1532,14 @@ public class VoiceManager
             session.turns.put(uid, turn);
             turn.pending = ticker.schedule(() -> answerName(guild, session, user, turn), NAME_WAIT_MS, TimeUnit.MILLISECONDS);
             LOG.info("Heard {} ({}){}: {} -> waiting for the rest", name, heard, how, said);
-            if (recorder != null)
-                recorder.routed(clip, "chat", "", "name only", null, true, followUp, 0);
+            routed(session, clip, lineId, "chat", "", "name only", null, true, followUp, 0);
             return;
         }
 
         if (!named && !followUp && SpokenText.isReaction(said))
         {
             LOG.info("Heard {} ({}), a reaction, not for the bot: {}", name, heard, said);
-            if (recorder != null)
-                recorder.routed(clip, "none", "", "reaction", null, false, false, 0);
+            routed(session, clip, lineId, "none", "", "reaction", null, false, false, 0);
             return;
         }
         List<String> recent = session.recent();
@@ -1421,7 +1551,7 @@ public class VoiceManager
         // command instead.
         // Its sentences are held until the router agrees it's chat.
         SpeechGate gate = new SpeechGate();
-        CompletableFuture<LlmClient.Decision> chat = named || followUp ? askLlm(session, name, said, player, recent, gate) : null;
+        CompletableFuture<LlmClient.Decision> chat = named || followUp ? askLlm(session, uid, name, said, player, recent, gate) : null;
 
         VoiceRouter.Route route = null;
         long routerMs = 0;
@@ -1461,21 +1591,19 @@ public class VoiceManager
         {
             LOG.info("Heard {} ({}, router {} ms{}), not for the bot{}: {}", name, heard, routerMs, sureness(route),
                     named ? " despite the name" : "", said);
-            if (recorder != null)
-                recorder.routed(clip, "none", "", "", route, named, followUp, routerMs);
+            routed(session, clip, lineId, "none", "", "", route, named, followUp, routerMs);
             return;
         }
         String args = route == null ? "" : route.args;
         LOG.info("Heard {} ({}, router {} ms{}){}: {} -> {} [{}]", name, heard, routerMs, sureness(route), how, said, command, args);
-        if (recorder != null)
-            recorder.routed(clip, command, command.equals("chat") ? "" : args, "", route, named, followUp, routerMs);
+        routed(session, clip, lineId, command, command.equals("chat") ? "" : args, "", route, named, followUp, routerMs);
         if (command.equals("not_you"))
         {
             notYou(guild, session, name, said, heardAt);
             return;
         }
         session.lastAnswered = uid;
-        session.lastResponse = new Answer(System.currentTimeMillis(), name, said, command, args, named, followUp, recent);
+        session.lastResponse = new Answer(System.currentTimeMillis(), name, said, command, args, named, followUp, recent, lineId, uid);
 
         if (!command.equals("chat"))
         {
@@ -1490,7 +1618,7 @@ public class VoiceManager
             return;
         }
         Turn turn = new Turn(said, named, line);
-        CompletableFuture<LlmClient.Decision> reply = chat != null ? chat : askLlm(session, name, said, player, recent, gate);
+        CompletableFuture<LlmClient.Decision> reply = chat != null ? chat : askLlm(session, uid, name, said, player, recent, gate);
         turn.pending = reply;
         session.turns.put(uid, turn);
         long asked = System.currentTimeMillis();
@@ -1543,6 +1671,11 @@ public class VoiceManager
             if (d.action == VoiceCommand.Type.SPECIALS)
             {
                 specialsInVoice(guild, session, user, name, said, d.query, LlmClient.forSpeech(d.reply), heardAt);
+                return;
+            }
+            if (d.action == VoiceCommand.Type.MUSIC_HISTORY)
+            {
+                historyInVoice(guild, session, user, name, d.task, LlmClient.forSpeech(d.reply), heardAt);
                 return;
             }
             if (d.action == VoiceCommand.Type.RESEARCH)
@@ -1698,7 +1831,7 @@ public class VoiceManager
         speak(guild, "Yes?");
     }
 
-    private CompletableFuture<LlmClient.Decision> askLlm(Session session, String name, String text, String player, List<String> recent,
+    private CompletableFuture<LlmClient.Decision> askLlm(Session session, long userId, String name, String text, String player, List<String> recent,
             Consumer<String> onSentence)
     {
         boolean explicit = session.adultConversation != null && session.mood.spicy();
@@ -1716,7 +1849,8 @@ public class VoiceManager
         Guild guild = session.channel instanceof net.dv8tion.jda.api.entities.channel.middleman.GuildChannel gc ? gc.getGuild() : null;
         String context = timeContext() + " Player: " + player
                 + (guild == null ? "" : historyContext(bot.getPlayerManager().setUpHandler(guild).getHistory(), System.currentTimeMillis()))
-                + (guild == null ? "" : " " + memoryContext(peopleInVoice(guild)) + lastSeenContext(peopleInVoice(guild)))
+                + (guild == null ? "" : " " + memoryContext(peopleInVoice(guild)) + lastSeenContext(peopleInVoice(guild))
+                        + tasteContext(guild.getIdLong(), userId, name))
                 + (before.isEmpty() ? "" : " Recent conversation in the channel:\n" + String.join("\n", before));
         return conversation.decide(name, text, context, onSentence);
     }
@@ -1909,6 +2043,17 @@ public class VoiceManager
             if (c.getName().equalsIgnoreCase(name))
                 return c;
         return null;
+    }
+
+    /** Notes what the bot made of a line, in the session's recording and in the history. */
+    private void routed(Session session, String clip, long lineId, String outcome, String args, String why, VoiceRouter.Route route,
+            boolean named, boolean followUp, long routerMs)
+    {
+        if (session.recorder != null)
+            session.recorder.routed(clip, outcome, args, why, route, named, followUp, routerMs);
+        if (database != null)
+            database.lineRouted(lineId, outcome, args, why, named, followUp, route != null && route.scored ? route.confidence : null,
+                    route == null ? null : routerMs);
     }
 
     /** How sure the router was that a line was for the bot, for the log; empty if it only says yes or no. */

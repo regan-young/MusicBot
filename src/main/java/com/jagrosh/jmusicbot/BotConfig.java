@@ -42,10 +42,10 @@ public class BotConfig
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
             evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice,
-            llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, routerDecisionModel, voiceRecordings, smartTurnModel, researchModel, timezone,
+            llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, routerDecisionModel, voiceRecordings, database, smartTurnModel, researchModel, timezone,
             nsfwLlmApi, nsfwLlmKey, nsfwLlmModel, nsfwLlmPrompt, crudeLlmPrompt, coderApi, coderKey, riceApi;
     private java.util.List<String> postChannels;
-    private int llmMaxTokens, musicGain;
+    private int llmMaxTokens, musicGain, databaseSpeechDays;
     private boolean stayInChannel, songInGame, useEval, dbots;
     private long owner, maxSeconds, aloneTimeUntilStop;
     private int maxYTPlaylistPages, mixSongs;
@@ -124,6 +124,8 @@ public class BotConfig
             postChannels = config.getStringList("postchannels");
             llmMaxTokens = config.getInt("llmmaxtokens");
             musicGain = Math.max(0, Math.min(100, config.getInt("musicgain")));
+            database = config.getString("database");
+            databaseSpeechDays = Math.max(0, config.getInt("databasespeechdays"));
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
             aliases = config.getConfig("aliases");
@@ -512,6 +514,16 @@ public class BotConfig
     public int getMusicGain()
     {
         return musicGain;
+    }
+
+    public String getDatabase()
+    {
+        return database;
+    }
+
+    public int getDatabaseSpeechDays()
+    {
+        return databaseSpeechDays;
     }
     
     public String getMaxTime()

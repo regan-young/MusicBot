@@ -94,4 +94,14 @@ public class LlmClientTest
         assertEquals("Sure thing, mate.", d.reply);
         assertEquals(Type.CHAT, LlmClient.parseDecision("{not json").action);
     }
+
+    @Test
+    public void aHistoryQuestionNeedsItsQuestion()
+    {
+        LlmClient.Decision d = LlmClient.parseDecision("{\"action\": \"history\", \"query\": \"\", \"task\": \"what did Devon play last Friday\", "
+                + "\"minutes\": 0, \"remember\": \"\", \"post\": \"\", \"reply\": \"Let me look back.\"}");
+        assertEquals(VoiceCommand.Type.MUSIC_HISTORY, d.action);
+        assertEquals("what did Devon play last Friday", d.task);
+        assertEquals(VoiceCommand.Type.CHAT, LlmClient.parseDecision("{\"action\": \"history\", \"task\": \"\", \"reply\": \"Hm.\"}").action);
+    }
 }

@@ -84,6 +84,8 @@ public class Coder
     private final ScheduledExecutorService ticker;
     private final Path whitelistFile;
     private final JSONObject whitelist; // user id -> name
+    // where requests and how they went are kept, or null
+    private volatile com.jagrosh.jmusicbot.data.BotDatabase database;
 
     /**
      * @param baseUrl the sidecar, e.g. http://musicbot-coder:8787, or empty when it isn't set up
@@ -101,6 +103,20 @@ public class Coder
         this.ticker = ticker;
         this.whitelistFile = whitelistFile;
         this.whitelist = load(whitelistFile);
+    }
+
+    /** Keeps each request and how it went in the bot's history. */
+    public Coder withDatabase(com.jagrosh.jmusicbot.data.BotDatabase database)
+    {
+        this.database = database;
+        return this;
+    }
+
+    private void record(String id, String state, String summary, String error, String commit)
+    {
+        com.jagrosh.jmusicbot.data.BotDatabase db = database;
+        if (db != null)
+            db.codeUpdated(id, System.currentTimeMillis(), state, summary, error, commit);
     }
 
     public boolean isEnabled()
@@ -262,6 +278,8 @@ public class Coder
         String id = res.getString("id");
         int ahead = res.optInt("position", 0);
         LOG.info("Coding task {} for {}: {}", id, requester.getEffectiveName(), task);
+        if (database != null)
+            database.codeRequested(id, "change", System.currentTimeMillis(), requester.getIdLong(), requester.getEffectiveName(), task);
         AtomicReference<ScheduledFuture<?>> poll = new AtomicReference<>();
         AtomicReference<String> seen = new AtomicReference<>("");
         long started = System.currentTimeMillis();
@@ -293,6 +311,7 @@ public class Coder
             {
                 // it answered, and doesn't know the task: it lost it, and waiting won't bring it back
                 LOG.warn("Coding task {} is gone from the coder", id);
+                record(id, "lost", null, "the coder restarted and no longer had the task", null);
                 stop(poll);
                 updates.post("\u26A0\uFE0F I lost track of that change: my coding setup restarted. Ask me again.");
                 updates.say("Sorry, I lost track of that change. Ask me again.");
@@ -306,6 +325,7 @@ public class Coder
             return;
         String summary = t.optString("summary", "").trim();
         LOG.info("Coding task {}: {} {}", id, state, summary);
+        record(id, state, summary, t.optString("error", ""), t.optString("commit", ""));
         switch (state)
         {
             case "done":
@@ -365,6 +385,9 @@ public class Coder
             return answer;
         }
         long start = System.currentTimeMillis();
+        if (database != null)
+            database.codeRequested(id, "ask", start, 0, requester, question);
+        answer.whenComplete((a, e) -> record(id, e == null ? "done" : "failed", a, e == null ? null : String.valueOf(e.getMessage()), null));
         AtomicReference<ScheduledFuture<?>> poll = new AtomicReference<>();
         poll.set(ticker.scheduleWithFixedDelay(() ->
         {

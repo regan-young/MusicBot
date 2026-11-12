@@ -226,4 +226,18 @@ public class VoiceFeaturesTest
         LlmClient.Decision m = LlmClient.parseDecision("{\"action\":\"chat\",\"remember\":\"Regan supports the Blues\",\"reply\":\"Nice.\"}");
         assertEquals("Regan supports the Blues", m.remember);
     }
+
+    @Test
+    public void tasteIsALineForTheLlmAndEmptyWithNoHistory()
+    {
+        java.util.List<com.jagrosh.jmusicbot.data.BotDatabase.Count> none = java.util.List.of();
+        assertEquals("", VoiceManager.taste(none, none, none, "Sam"));
+        String taste = VoiceManager.taste(
+                java.util.List.of(new com.jagrosh.jmusicbot.data.BotDatabase.Count("Dreams", "Fleetwood Mac", 5),
+                        new com.jagrosh.jmusicbot.data.BotDatabase.Count("Africa", "Toto", 2)),
+                java.util.List.of(new com.jagrosh.jmusicbot.data.BotDatabase.Count("Photograph", "Nickelback", 3)),
+                java.util.List.of(new com.jagrosh.jmusicbot.data.BotDatabase.Count("Pink Pony Club", null, 1)), "Sam");
+        assertEquals(" Played most here lately: Dreams by Fleetwood Mac (5); Africa by Toto (2). Often skipped early: "
+                + "Photograph by Nickelback. Sam has asked for: Pink Pony Club.", taste);
+    }
 }

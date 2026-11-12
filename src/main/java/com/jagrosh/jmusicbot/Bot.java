@@ -19,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import com.jagrosh.jdautilities.commons.waiter.EventWaiter;
 import com.jagrosh.jmusicbot.audio.AloneInVoiceHandler;
+import com.jagrosh.jmusicbot.data.BotDatabase;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.NowplayingHandler;
 import com.jagrosh.jmusicbot.audio.PlayerControls;
@@ -52,6 +53,8 @@ public class Bot
     private final PlayerControls playerControls;
     private final VoiceManager voiceManager;
     private final LastSeen lastSeen = new LastSeen(java.nio.file.Path.of("last-seen.json"));
+    // what's been played, said and asked for; null when there's no database
+    private final BotDatabase database;
     
     private boolean shuttingDown = false;
     private JDA jda;
@@ -62,6 +65,7 @@ public class Bot
         this.waiter = waiter;
         this.config = config;
         this.settings = settings;
+        this.database = BotDatabase.open(config.getDatabase());
         this.playlists = new PlaylistLoader(config);
         this.threadpool = Executors.newSingleThreadScheduledExecutor();
         this.players = new PlayerManager(this);
@@ -125,6 +129,12 @@ public class Bot
         return voiceManager;
     }
 
+    /** The bot's history, or null when there's no database. */
+    public BotDatabase getDatabase()
+    {
+        return database;
+    }
+
     public LastSeen getLastSeen()
     {
         return lastSeen;
@@ -162,6 +172,8 @@ public class Bot
         if(shuttingDown)
             return;
         shuttingDown = true;
+        if(database!=null)
+            database.close();
         threadpool.shutdownNow();
         if(jda.getStatus()!=JDA.Status.SHUTTING_DOWN)
         {
