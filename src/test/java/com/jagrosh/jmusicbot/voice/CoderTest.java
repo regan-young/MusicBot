@@ -142,4 +142,15 @@ public class CoderTest
         assertTrue(VoiceManager.ABOUT.contains("github.com/regan-young/MusicBot"));
         assertTrue(VoiceManager.ABOUT.startsWith("\n\n"));
     }
+
+    @Test
+    public void aTaskTheCoderLostIsGone()
+    {
+        // what Coder.call throws when the sidecar answers 404: it restarted and no longer has the task
+        assertTrue(Coder.isGone(new java.io.IOException("Coder GET /tasks/abc: HTTP 404 {\"error\":\"no such task\"}")));
+        // a sidecar that's down or busy is worth another try
+        assertFalse(Coder.isGone(new java.io.IOException("Coder GET /tasks/abc: HTTP 502 bad gateway")));
+        assertFalse(Coder.isGone(new java.net.ConnectException("Connection refused")));
+        assertFalse(Coder.isGone(new java.io.IOException((String) null)));
+    }
 }

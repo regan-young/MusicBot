@@ -6,7 +6,8 @@
 #   .env   CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) and CODER_KEY
 #          (the same value as coderkey in the bot's config.txt)
 #   home/  the container's $HOME: .ssh/id_ed25519 (a write deploy key for the
-#          repo), the Maven cache and Claude Code's state
+#          repo), the Maven cache, Claude Code's state, and coder-tasks.json
+#          (the task list, so a restart doesn't lose it)
 #   work/  the checkout Claude Code works in
 name: musicbot-coder
 
@@ -23,6 +24,11 @@ services:
       - /home/regan/musicbot-coder/work:/work
     # the bot reaches it at http://musicbot-coder:8787; no port is published
     networks: [musicbot]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
     logging:
       driver: loki
       options:

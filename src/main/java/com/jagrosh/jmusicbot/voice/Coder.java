@@ -289,6 +289,15 @@ public class Coder
         }
         catch (Exception e)
         {
+            if (isGone(e))
+            {
+                // it answered, and doesn't know the task: it lost it, and waiting won't bring it back
+                LOG.warn("Coding task {} is gone from the coder", id);
+                stop(poll);
+                updates.post("\u26A0\uFE0F I lost track of that change: my coding setup restarted. Ask me again.");
+                updates.say("Sorry, I lost track of that change. Ask me again.");
+                return;
+            }
             LOG.debug("Coder poll failed for {}", id, e);
             return; // the sidecar may be restarting; try again next time
         }
@@ -375,12 +384,20 @@ public class Coder
             }
             catch (Exception e)
             {
+                if (isGone(e))
+                    answer.completeExceptionally(new IOException("the coder restarted and lost the question"));
                 LOG.debug("Ask poll failed for {}", id, e);
             }
             if (answer.isDone())
                 stop(poll);
         }, ASK_POLL_MS, ASK_POLL_MS, TimeUnit.MILLISECONDS));
         return answer;
+    }
+
+    /** Whether a call failed because the sidecar has no such task or question (HTTP 404). */
+    static boolean isGone(Exception e)
+    {
+        return e instanceof IOException && e.getMessage() != null && e.getMessage().contains(": HTTP 404 ");
     }
 
     private static void stop(AtomicReference<ScheduledFuture<?>> poll)
