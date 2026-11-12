@@ -100,6 +100,7 @@ public class BotConfig
             voiceApi = config.getString("voiceapi");
             voiceSttModel = config.getString("voicesttmodel");
             voiceRecordings = config.getString("voicerecordings");
+            voiceTtsTags = config.getStringList("voicettstags");
             voiceTtsModel = config.getString("voicettsmodel");
             voiceTtsVoice = config.getString("voicettsvoice");
             llmApi = config.getString("llmapi");
@@ -434,6 +435,13 @@ public class BotConfig
     public String getRouterModel()
     {
         return routerModel;
+    }
+
+    private java.util.List<String> voiceTtsTags = java.util.List.of();
+
+    public java.util.List<String> getVoiceTtsTags()
+    {
+        return voiceTtsTags;
     }
 
     public String getVoiceRecordings()

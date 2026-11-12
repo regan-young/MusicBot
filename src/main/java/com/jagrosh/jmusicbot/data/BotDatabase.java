@@ -332,6 +332,31 @@ public final class BotDatabase implements AutoCloseable
                 userId == 0 ? null : userId, speaker, line, routed, args, correctedBy, correction, conversation);
     }
 
+    /**
+     * A session's conversation since a time, oldest first, as "[8:31 PM] Name: text" lines, for the chat LLM to
+     * recap. The bot's own voice heard back and empty transcripts are left out.
+     * @param limit the most lines to give, the latest ones
+     */
+    public synchronized String conversation(long guildId, long session, long since, ZoneId zone, String botName, int limit)
+    {
+        DateTimeFormatter time = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH).withZone(zone);
+        List<String> lines = new ArrayList<>();
+        try (PreparedStatement s = prepare("SELECT at, name, text FROM (SELECT heard_at AS at, name, text FROM voice_lines "
+                + "WHERE guild_id = ? AND session = ? AND heard_at >= ? AND echo = 0 AND text != '' "
+                + "UNION ALL SELECT said_at, ?, text FROM bot_lines WHERE guild_id = ? AND session = ? AND said_at >= ? "
+                + "ORDER BY at DESC LIMIT ?) ORDER BY at", guildId, session, since, botName, guildId, session, since, limit);
+                ResultSet r = s.executeQuery())
+        {
+            while (r.next())
+                lines.add("[" + time.format(Instant.ofEpochMilli(r.getLong("at"))) + "] " + r.getString("name") + ": " + r.getString("text"));
+        }
+        catch (SQLException e)
+        {
+            LOG.warn("Could not read the conversation", e);
+        }
+        return String.join("\n", lines);
+    }
+
     // ------------------------------------------------------------------ changes to the bot
 
     /** A change or a question sent to the coder sidecar. @param kind "change" or "ask" */

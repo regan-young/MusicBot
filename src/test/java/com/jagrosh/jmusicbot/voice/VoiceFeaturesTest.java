@@ -237,7 +237,37 @@ public class VoiceFeaturesTest
                         new com.jagrosh.jmusicbot.data.BotDatabase.Count("Africa", "Toto", 2)),
                 java.util.List.of(new com.jagrosh.jmusicbot.data.BotDatabase.Count("Photograph", "Nickelback", 3)),
                 java.util.List.of(new com.jagrosh.jmusicbot.data.BotDatabase.Count("Pink Pony Club", null, 1)), "Sam");
-        assertEquals(" Played most here lately: Dreams by Fleetwood Mac (5); Africa by Toto (2). Often skipped early: "
+        assertEquals(" Played most here lately (a guide to their taste, not a list to play again): Dreams by Fleetwood Mac (5); Africa by Toto (2). Often skipped early: "
                 + "Photograph by Nickelback. Sam has asked for: Pink Pony Club.", taste);
+    }
+
+    @Test
+    public void onlyTagsTheVoiceKnowsAreKept()
+    {
+        java.util.Set<String> tags = java.util.Set.of("laugh", "sigh", "whispering");
+        assertEquals("[sigh] Fine, I'll skip it.", SpokenText.onlyTags("[sigh] Fine, I'll skip it.", tags));
+        assertEquals("That's terrible. [laugh] Do another.", SpokenText.onlyTags("That's terrible. [Laugh] Do another.", tags));
+        // a tag this voice doesn't have would be read out as a word
+        assertEquals("Oh, brilliant plan.", SpokenText.onlyTags("[sarcastic] Oh, brilliant plan.", tags));
+        assertEquals("Fine, I'll skip it.", SpokenText.onlyTags("[sigh] Fine, I'll skip it.", java.util.Set.of()));
+        assertEquals("Nothing to change here.", SpokenText.onlyTags("Nothing to change here.", tags));
+    }
+
+    @Test
+    public void theLlmIsOnlyToldAboutTagsTheVoiceHas()
+    {
+        assertEquals("", VoiceManager.voiceTagsContext(java.util.Set.of()));
+        String told = VoiceManager.voiceTagsContext(new java.util.LinkedHashSet<>(java.util.List.of("laugh", "sigh")));
+        assertTrue(told, told.contains("[laugh], [sigh]."));
+    }
+
+    @Test
+    public void aRunOfSongsIsSplitAndCapped()
+    {
+        assertEquals(java.util.List.of("Fleetwood Mac - Dreams"), SpokenText.songs("Fleetwood Mac - Dreams"));
+        assertEquals(java.util.List.of("Toto - Africa", "Oasis - Wonderwall", "a-ha - Take On Me"),
+                SpokenText.songs("Toto - Africa | Oasis - Wonderwall|  a-ha - Take On Me |"));
+        assertEquals(5, SpokenText.songs("a | b | c | d | e | f | g").size());
+        assertTrue(SpokenText.songs("").isEmpty());
     }
 }

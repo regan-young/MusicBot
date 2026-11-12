@@ -50,10 +50,10 @@ public class LlmClient
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
             + "only a JSON object, no other text, with the keys in this order: {\"action\": one of \"play\", \"radio\", "
             + "\"mix\", \"skip\", \"skipto\", \"pause\", \"resume\", \"stop\", \"research\", \"remind\", \"cancel_reminders\", "
-            + "\"forget\", \"specials\", \"history\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
+            + "\"forget\", \"specials\", \"history\", \"recap\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
             + "search for (play, radio and mix), the song's name or its number in the queue as digits (skipto), the product they're asking about (specials), or the person's name "
             + "(allow_coder and revoke_coder), otherwise empty; "
-            + "\"task\": for research, remind, history, introspect and code only (and allow_coder, when a change is asked for too), otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
+            + "\"task\": for research, remind, history, recap, introspect and code only (and allow_coder, when a change is asked for too), otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
             + "usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
             + "out loud}. "
             + "Use play when they want a song, artist or album played or queued (query = what to search YouTube for), "
@@ -71,6 +71,16 @@ public class LlmClient
             + "that song's URL from Played earlier in the context. Use chat for everything else, including questions "
             + "about the current song, which is given in the context. Only choose a music action when they clearly "
             + "ask for it; otherwise chat. For music actions keep reply to a few words, like \"Skipping.\" "
+            + "A play query is always something real to search for, an \"Artist - Title\" or a name they gave, never a "
+            + "description (\"a banger\", \"song that slaps\"); speech recognition mangles names, so put the name right "
+            + "when you can tell what they meant. When they ask for a playlist, a few songs, a run or a mix of your "
+            + "choosing, use play with up to five songs in query, separated by \" | \". When the choice is yours, "
+            + "for one song or several, choose songs in the vein of what they like that are not in Played earlier or "
+            + "Played most here and that you haven't picked already: those lists show their taste and aren't for "
+            + "playing again unless they ask. Never pick something they've told you not to play. A remark about "
+            + "the game or their day is chat, not a request for a song. When they say that isn't what they asked "
+            + "for, work out from the recent conversation what they meant and play that, never the same thing again; "
+            + "if you can't tell, ask. "
             + "Use research when a good answer needs information you'd have to look up (news, sport results, "
             + "weather, prices, opening hours, release dates, anything recent or that you aren't sure of) or "
             + "careful thought (detailed explanations, comparisons, plans, recommendations they want done properly). "
@@ -98,6 +108,9 @@ public class LlmClient
             + "most, what someone tends to ask for, how often a song has been on. task = the question, "
             + "self-contained, and reply = a short holding line; the play history is looked up for you. The favourites "
             + "in the context are there for picking music people here like, when the choice is yours. "
+            + "Use recap when they ask what someone said, to repeat or sum up something from this voice chat, or what "
+            + "they missed, and it isn't in the recent conversation you can see: task = what they want to know, and "
+            + "reply = a short holding line; the conversation so far is looked up for you. "
             + "Use introspect when they ask how you work inside, how you were built or why you behave a certain way, "
             + "and a precise answer needs your own source code (what you know about yourself is only a summary), "
             + "and also when they ask why you're slow, laggy or broken right now, why you didn't hear or answer "
@@ -114,6 +127,8 @@ public class LlmClient
             + "someone change your code and revoke_coder to stop them (query = that person's name), and list_coders "
             + "when they ask who can. If they also tell you to go ahead with a change, such as that person's request "
             + "from the conversation, use allow_coder with task = that change, written as for code. "
+            + "Say it in one short sentence unless they ask for more, and don't explain yourself or repeat what you've "
+            + "just said. Use people's names rather than he, she or they. "
             + "The actions above are all you can do. You can't message or DM anyone, pass something on to "
             + "someone later, see who's online, or do anything after this reply unless an action does it: when asked "
             + "for one of those, say plainly that you can't, and never promise to. When someone was last around is "
@@ -129,7 +144,7 @@ public class LlmClient
                     .put("properties", new JSONObject()
                             .put("action", new JSONObject().put("type", "string").put("enum", new JSONArray()
                                     .put("play").put("radio").put("mix").put("skip").put("skipto").put("pause").put("resume").put("stop")
-                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("specials").put("history").put("introspect").put("code")
+                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("specials").put("history").put("recap").put("introspect").put("code")
                                     .put("allow_coder").put("revoke_coder").put("list_coders").put("chat")))
                             .put("query", new JSONObject().put("type", "string"))
                             .put("task", new JSONObject().put("type", "string"))
@@ -447,6 +462,7 @@ public class LlmClient
             case "forget": action = VoiceCommand.Type.FORGET; break;
             case "specials": action = VoiceCommand.Type.SPECIALS; break;
             case "history": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.MUSIC_HISTORY; break;
+            case "recap": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.RECAP; break;
             case "introspect": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.INTROSPECT; break;
             case "code":   action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.CODE; break;
             case "allow_coder":  action = VoiceCommand.Type.ALLOW_CODER; break;

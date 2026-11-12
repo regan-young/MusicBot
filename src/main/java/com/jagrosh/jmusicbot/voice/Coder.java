@@ -417,6 +417,17 @@ public class Coder
         return answer;
     }
 
+    /**
+     * Why a question to the coder failed, if the sidecar gave a reason fit to
+     * say out loud (it's out of Claude usage, it took too long); empty otherwise.
+     */
+    public static String spokenReason(Throwable e)
+    {
+        Throwable cause = e instanceof java.util.concurrent.CompletionException && e.getCause() != null ? e.getCause() : e;
+        String why = cause == null || cause.getMessage() == null ? "" : cause.getMessage().trim();
+        return why.startsWith("I've ") || why.startsWith("I'm ") || why.startsWith("it took ") ? why : "";
+    }
+
     /** Whether a call failed because the sidecar has no such task or question (HTTP 404). */
     static boolean isGone(Exception e)
     {

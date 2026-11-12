@@ -117,4 +117,16 @@ public class VoiceCommandTest
         assertEquals("Sure, here's the plan: rest up.", LlmClient.forSpeech("**Sure**, here's the _plan_: rest up. 😀"));
         assertEquals("See the docs for more.", LlmClient.forSpeech("See [the docs](https://example.com) for more."));
     }
+
+    @Test
+    public void namesAsSpeechRecognitionHasWrittenThem()
+    {
+        // from the 12 November session
+        for (String heard : new String[] { "Stop. Stop, Calabod, stop.", "Hey, Ganabod did you play the song?",
+                "Wait a minute, Gunnerpot's recording.", "Gunbot, can you turn it down by 20?", "Cannabot, can you please skip this song?" })
+            assertTrue(heard, VoiceCommand.parse(heard).addressed);
+        // and ordinary words that end the same way aren't it
+        for (String heard : new String[] { "I had a jackpot last night", "Nobody saw the body", "He bought a teapot" })
+            assertFalse(heard, VoiceCommand.parse(heard).addressed);
+    }
 }

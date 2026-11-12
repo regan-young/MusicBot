@@ -153,4 +153,14 @@ public class CoderTest
         assertFalse(Coder.isGone(new java.net.ConnectException("Connection refused")));
         assertFalse(Coder.isGone(new java.io.IOException((String) null)));
     }
+
+    @Test
+    public void onlyAReasonFitToSayIsSaid()
+    {
+        assertEquals("I've run out of Claude usage for now.", Coder.spokenReason(new java.io.IOException("I've run out of Claude usage for now.")));
+        assertEquals("I've run out of Claude usage for now.", Coder.spokenReason(
+                new java.util.concurrent.CompletionException(new java.io.IOException("I've run out of Claude usage for now."))));
+        assertEquals("", Coder.spokenReason(new java.io.IOException("Coder POST /asks: HTTP 500 {\"error\":\"internal error\"}")));
+        assertEquals("", Coder.spokenReason(new java.io.IOException((String) null)));
+    }
 }

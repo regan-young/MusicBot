@@ -181,6 +181,18 @@ function summaryOf(text) {
   return chosen.replace(/[`*_#>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 500);
 }
 
+/**
+ * Why Claude Code stopped, for the person who asked. Out of usage is the one
+ * that matters most: it's why nothing works until the limit resets, and it
+ * used to come out as "stopped with an error (success)".
+ */
+function claudeError(result) {
+  const said = String(result.result || '').replace(/\s+/g, ' ').trim();
+  if (/usage limit|rate limit|limit reached|out of (extra )?usage|credit balance|quota/i.test(said))
+    return `I've run out of Claude usage for now${said ? ` (${said.slice(0, 140)})` : ''}.`;
+  return `Claude Code stopped with an error: ${said.slice(0, 200) || result.subtype || 'unknown'}.`;
+}
+
 /** The failing tests from a Maven run, in a few words, for the person who asked. */
 function failedTests(output) {
   const names = new Set();
@@ -289,7 +301,7 @@ async function work(task) {
     const summary = summaryOf(result.result);
     set({ summary, costUsd: result.total_cost_usd });
     log(task.id, 'Claude Code finished:', String(result.result || '').trim());
-    if (result.is_error) throw new Error(`Claude Code stopped with an error (${result.subtype || 'unknown'}).`);
+    if (result.is_error) throw new Error(claudeError(result));
 
     // It's told not to commit. If it did, the tree looks clean and the change
     // would be reported done without ever being pushed: put its commits back
@@ -360,7 +372,7 @@ async function answer(ask) {
     } catch {
       throw new Error(`Claude Code didn't finish (exit ${claude.code}): ${(claude.err || claude.out).trim().slice(-300)}`);
     }
-    if (result.is_error) throw new Error(`Claude Code stopped with an error (${result.subtype || 'unknown'}).`);
+    if (result.is_error) throw new Error(claudeError(result));
     set({ state: 'done', answer: String(result.result || '').trim().slice(0, 1900) });
     log(ask.id, 'answered:', ask.answer);
   } catch (e) {

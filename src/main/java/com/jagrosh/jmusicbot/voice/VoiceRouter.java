@@ -50,8 +50,9 @@ import org.slf4j.LoggerFactory;
  * There are two ways to ask. A decision model (Gemini Decision 1 through
  * OpenRouter's Decisions API) answers both questions with probabilities and
  * writes no text, so it's quick and says how sure it is; the chat model
- * (Gemma 3 12B) is then only asked for what a command needs spelled out, the
- * song or the volume. Without a decision model, or when it fails, the chat
+ * (Gemini 3.1 Flash Lite) is then only asked for what a command needs spelled
+ * out, the song or the volume, putting right the names speech recognition
+ * mangles on the way. Without a decision model, or when it fails, the chat
  * model answers everything as JSON, as it did before.
  */
 public class VoiceRouter
@@ -428,11 +429,14 @@ public class VoiceRouter
             + "imperfect: her name may come out as Gunnerbot, Gunabot, Ganabot, Annabot, gonna bot, bot, robot or clanker. "
             + "Is the speaker of last_line talking TO Gunnabot? Judge last_line only; earlier_lines are context.";
     private static final String TO_BOT_TRUE = "They ask or tell Gunnabot something, or answer what she just said to them. "
-            + "bot_just_answered_this_speaker makes a reply to her more likely, but only when the line makes sense as one.";
+            + "bot_just_answered_this_speaker makes a reply to her more likely, but only when the line makes sense as one. Her "
+            + "name with a word or two that make no sense is usually a short command misheard ('Gunabot skirt' and 'gonna bot "
+            + "scoop' are skip).";
     private static final String TO_BOT_FALSE = "They are talking to their friends, reacting to something, or talking ABOUT "
             + "the bot (she, her, it, the bot, 'why did Gunnabot say that'). Game talk is not for her: in Dota 'bot' is the "
             + "bottom lane ('going bot', 'bot tower'), and pause, stop, skip and play are often about the game. A line that "
-            + "only continues the friends' own conversation is false even straight after she spoke.";
+            + "only continues the friends' own conversation is false even straight after she spoke, and so is one that speaks to "
+            + "someone else by name ('what else you got, Whisk?').";
     private static final String WHICH = "Which of Gunnabot's commands does last_line itself ask for? Earlier lines are only "
             + "context: never pick a command because someone asked for it earlier or the bot just did it. An answer to "
             + "something the bot asked ('yes', 'go on then', 'the first one') is chat.";
@@ -441,10 +445,10 @@ public class VoiceRouter
         { "radio", "Tune in to a live radio station (RNZ, ZM, The Edge, The Rock, George FM, BBC, Triple J, ...) or radio "
                 + "of a genre; anything said with radio, station or FM." },
         { "mix", "Queue several songs similar to a song or artist ('more like this', 'songs like X', 'a mix of X')." },
-        { "skip", "Skip the current song, or go to the next one." },
+        { "skip", "Skip the current song, or go to the next one. Speech recognition sometimes writes skip as scoop, skirt or skit." },
         { "skipto", "Jump to a particular song already in the queue, by name or number ('skip to Dreams', 'go to number "
                 + "three')." },
-        { "pause", "Pause the music for now." },
+        { "pause", "Pause the music for now. Someone saying they will pause or stop something themselves ('I'll pause it') is none." },
         { "resume", "Continue paused music." },
         { "stop", "Stop the music and clear the queue. Only when they clearly ask for the music to stop." },
         { "leave", "Tell the bot to leave the voice channel ('bot, you can go', 'disconnect'). Someone saying they are "
@@ -576,7 +580,9 @@ public class VoiceRouter
     private static final String ARGS_SYSTEM = "Gunnabot is a music bot in a Discord voice channel. Someone just asked it "
             + "for the command below; work out what the command needs from their line. Speech recognition is imperfect, "
             + "and the bot's name (Gunnabot, Gunnerbot, bot, robot, clanker), filler and politeness aren't part of it.\n"
-            + "- play: the song, artist or album to search for\n"
+            + "- play: the song, artist or album to search YouTube for, as \"Artist - Title\" when you know both. Speech "
+            + "recognition mangles names, so write the real song and artist you believe they said, using every clue "
+            + "in the line (a lyric or a second title counts), and add nothing they didn't ask for\n"
             + "- radio: the station name or genre\n"
             + "- mix: the song or artist to base the mix on, or empty for what's playing now\n"
             + "- skipto: the queued song's name, or its number in the queue as digits\n"
@@ -585,7 +591,10 @@ public class VoiceRouter
             + "Reply with only JSON: {\"args\": \"...\"}";
     private static final String[][] ARGS_EXAMPLES = {
         { "play", "Regan: robot, put on some Fleetwood Mac", "Volume 100.", "Fleetwood Mac" },
-        { "play", "Devon: Gunnerbot, play us uh Africa by Toto, mate.", "Volume 100.", "Africa by Toto" },
+        { "play", "Devon: Gunnerbot, play us uh Africa by Toto, mate.", "Volume 100.", "Toto - Africa" },
+        { "play", "Sam: bot can you play mister bright side by the colours", "Volume 100.", "The Killers - Mr. Brightside" },
+        { "play", "Regan: Gunnabot queue up Billy Eyelash, the bad guy one, after this", "Volume 100.", "Billie Eilish - bad guy" },
+        { "play", "Sam: play the lord of the rings soundtrack bot", "Volume 100.", "The Lord of the Rings soundtrack" },
         { "radio", "Regan: bot, chuck on the BBC World Service", "Volume 100.", "BBC World Service" },
         { "mix", "Regan: robot, can you do more songs like this one", "Now playing: Dreams by Fleetwood Mac. Volume 100.", "" },
         { "mix", "Sam: Gunnabot make us a mix of Tame Impala", "Volume 100.", "Tame Impala" },

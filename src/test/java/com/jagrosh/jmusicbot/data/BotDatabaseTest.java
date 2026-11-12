@@ -208,4 +208,21 @@ public class BotDatabaseTest
         assertEquals(1, db.number("SELECT COUNT(*) FROM code_requests WHERE state = 'deployed' AND summary = 'Added a join announcement.' "
                 + "AND commit_sha = 'abc123' AND error IS NULL AND updated_at = ?", NOW + 20_000));
     }
+
+    @Test
+    public void theConversationReadsInOrderWithTheBotInIt()
+    {
+        db.lineHeard(db.nextId(), GUILD, 99, NOW, DEVON, "Devon", "so I said to him, no way", 900, 190, "parakeet", null, false);
+        db.lineHeard(db.nextId(), GUILD, 99, NOW + 2000, SAM, "Sam", "", 400, 150, "parakeet", null, false);
+        db.lineHeard(db.nextId(), GUILD, 99, NOW + 3000, SAM, "Sam", "Queuing up Dreams", 900, 190, "parakeet", null, true);
+        db.botLine(GUILD, 99, NOW + 4000, "Sounds like quite the story.");
+        db.lineHeard(db.nextId(), GUILD, 99, NOW + 60_000, SAM, "Sam", "what happened next", 900, 190, "parakeet", null, false);
+        db.lineHeard(db.nextId(), GUILD, 98, NOW, SAM, "Sam", "another night", 900, 190, "parakeet", null, false);
+        db.lineHeard(db.nextId(), GUILD, 99, NOW - 2 * 3600_000, SAM, "Sam", "too long ago", 900, 190, "parakeet", null, false);
+        db.flush();
+        assertEquals("[8:00 PM] Devon: so I said to him, no way\n[8:00 PM] Gunnabot: Sounds like quite the story.\n"
+                + "[8:01 PM] Sam: what happened next", db.conversation(GUILD, 99, NOW - 3600_000, NZ, "Gunnabot", 500));
+        // only the latest lines when there are too many
+        assertEquals("[8:01 PM] Sam: what happened next", db.conversation(GUILD, 99, NOW - 3600_000, NZ, "Gunnabot", 1));
+    }
 }

@@ -106,4 +106,32 @@ final class SpokenText
             s = s.substring(0, cut + 1);
         return s.length() > 160 ? s.substring(0, 157) + "..." : s;
     }
+
+    private static final java.util.regex.Pattern TAG = java.util.regex.Pattern.compile("\\[([A-Za-z][A-Za-z ]{1,20})\\]\\s*");
+
+    /**
+     * Keeps the expressive tags the voice understands ("[laugh]", "[sigh]")
+     * and drops any other, which a voice would read out as words.
+     * @param allowed the tags the voice knows, without brackets; none means the voice has no tags
+     */
+    static String onlyTags(String text, java.util.Collection<String> allowed)
+    {
+        java.util.regex.Matcher m = TAG.matcher(text);
+        StringBuilder sb = new StringBuilder();
+        while (m.find())
+            m.appendReplacement(sb, allowed.contains(m.group(1).toLowerCase(Locale.ROOT))
+                    ? java.util.regex.Matcher.quoteReplacement("[" + m.group(1).toLowerCase(Locale.ROOT) + "] ") : "");
+        m.appendTail(sb);
+        return sb.toString().replaceAll("\\s+", " ").trim();
+    }
+
+    /** The songs in a play query: one, or several separated by " | " when a run of songs was asked for. At most five. */
+    static List<String> songs(String query)
+    {
+        List<String> out = new ArrayList<>();
+        for (String song : query.split("\\s*\\|\\s*"))
+            if (!song.isBlank() && out.size() < 5)
+                out.add(song.trim());
+        return out;
+    }
 }

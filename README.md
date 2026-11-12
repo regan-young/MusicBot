@@ -18,7 +18,8 @@ This repository is the bot one server runs, kept public so it can be read. It is
 
 - Listens to everyone in the voice channel and works out which lines are said to it, so nobody has to use its name every time.
 - Runs music requests said aloud ("put on some Six60", "turn it down a bit", "skip to Dreams").
-- Chats, and talks over the music instead of pausing it.
+- Chats, and talks over the music instead of pausing it. If you talk over it, it stops only when what you said was for it.
+- Queues a run of songs when asked for a playlist, picks songs the server has not just played, and can look back over the evening's conversation ("what did I miss?").
 - Looks things up on the web in the background and comes back with the answer when there is a gap in the conversation.
 - Sets reminders, remembers lasting facts people tell it, and answers questions about this week's supermarket specials.
 - Can change its own code: people on the owner's whitelist ask, a sidecar running Claude Code makes and tests the change, and the bot restarts to deploy it.
@@ -42,7 +43,7 @@ Discord audio, one stream per person
 The router is the part that makes the bot feel right or wrong, so it is worth knowing how it decides:
 
 - A **decision model** (`routerdecisionmodel`, Gemini Decision 1 on OpenRouter's Decisions API) answers two questions with probabilities: is the line for the bot, and which command is it. The bot acts when the combined score passes a threshold, which is higher for a line that neither names the bot nor follows something it just said.
-- A small **chat model** (`routermodel`, Gemma 3 12B) is then asked only for what a command needs spelled out: the song, the station or the volume. It also takes over the whole job when the decision model is not set or fails.
+- A small **chat model** (`routermodel`, Gemini 3.1 Flash Lite) is then asked only for what a command needs spelled out: the song, the station or the volume. It also puts right the names speech recognition mangles, so "Ear the James, or rather go blind" is searched as Etta James - I'd Rather Go Blind, and it takes over the whole job when the decision model is not set or fails.
 - Saying the bot's name counts as talking to it, unless the decision model is confident it was not ("going bot" is a Dota lane).
 - While the router decides, the chat reply is already being written, and is thrown away if the line turns out to be a command or not for the bot.
 
@@ -53,6 +54,7 @@ Every setting is documented where its default lives, in [`src/main/resources/ref
 | Settings | What they turn on |
 |---|---|
 | `voiceapi`, `voicesttmodel`, `voicettsmodel`, `voicettsvoice` | Speech. An OpenAI-compatible speech server; without it there is no `?chat` or `?say`. |
+| `voicettstags` | Expressive tags the voice understands, such as `laugh`, `sigh` and `whispering`. The bot is told it may use them, and writes its replies to be performed. |
 | `llmapi`, `llmkey`, `llmmodel`, `llmprompt`, `llmmaxtokens` | The chat model and the bot's persona. Without a key, `?chat` only takes simple spoken commands. |
 | `routerapi`, `routerkey`, `routermodel`, `routerdecisionmodel` | The router. Without `routerapi`, the bot only answers to its name. |
 | `smartturnmodel` | The end-of-turn model, so the bot does not cut people off. |
@@ -125,7 +127,7 @@ Each clip is the audio exactly as the speech model received it (16 kHz mono WAV)
 ```
 mvn -B test-compile dependency:build-classpath -Dmdep.outputFile=target/cp.txt
 OPENROUTER_API_KEY=... java -cp "target/classes:target/test-classes:$(cat target/cp.txt)" \
-    com.jagrosh.jmusicbot.voice.RouterBench cases.jsonl google/gemma-3-12b-it google/gemini-decision-1
+    com.jagrosh.jmusicbot.voice.RouterBench cases.jsonl google/gemini-3.1-flash-lite google/gemini-decision-1
 ```
 
 The case format is described at the top of `RouterBench.java`. Cases come from real sessions (the recordings and `voice-feedback.jsonl` are good sources), so they are kept out of this repository.

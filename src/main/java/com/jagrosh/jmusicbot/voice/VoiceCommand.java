@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
 public final class VoiceCommand
 {
     // RADIO, MIX and RESEARCH only come from the LLM; keyword parsing doesn't produce them
-    public enum Type { PLAY, RADIO, MIX, SKIP, SKIP_TO, PAUSE, RESUME, STOP, NOW_PLAYING, RESEARCH, REMIND, CANCEL_REMINDERS, FORGET, SPECIALS, MUSIC_HISTORY, INTROSPECT, CODE, ALLOW_CODER, REVOKE_CODER,
+    public enum Type { PLAY, RADIO, MIX, SKIP, SKIP_TO, PAUSE, RESUME, STOP, NOW_PLAYING, RESEARCH, REMIND, CANCEL_REMINDERS, FORGET, SPECIALS, MUSIC_HISTORY, RECAP, INTROSPECT, CODE, ALLOW_CODER, REVOKE_CODER,
         LIST_CODERS, CHAT }
 
     public final Type type;
@@ -45,9 +45,10 @@ public final class VoiceCommand
     }
 
     // the bot's names. Speech-to-text mangles "Gunnabot" into gunnerbot,
-    // annabot, guttabot, gonna bot..., so any word ending in -abot/-erbot counts.
+    // annabot, guttabot, gonna bot..., so any word ending in -abot/-erbot counts,
+    // and so do the endings it's been heard with since: calabod, gunnerpot, gunbot.
     private static final Pattern WAKE = Pattern.compile(
-            "\\b(?:(?:hey|hi|ok|okay|oi)\\s+)?(?:\\p{L}{2,}(?:a|ah|er|uh)\\s?bot|robot|bot|clankers?)\\b");
+            "\\b(?:(?:hey|hi|ok|okay|oi)\\s+)?(?:\\p{L}{2,}(?:a|ah|er|uh)\\s?bot|[gck]\\p{L}+(?:a|ah|er|uh)\\s?(?:bod|pot)|gun+\\s?bot|robot|bot|clankers?)\\b");
     private static final Pattern PUNCTUATION = Pattern.compile("[^\\p{L}\\p{N}'\\s]");
 
     private static final Pattern FILLER = Pattern.compile("\\b(?:um+|uh+|er+|erm|hmm+|so|yeah|hey|hi|hello|yo|oi|ok|okay)\\b");
