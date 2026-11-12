@@ -204,6 +204,8 @@ public class VoiceManager
         private final Deque<Line> botSaid = new ArrayDeque<>();
         // things the bot said it would look into and hasn't answered yet
         final Set<CompletableFuture<Researcher.Result>> research = ConcurrentHashMap.newKeySet();
+        // saves the session's clips and transcript; null if recording is off
+        volatile SessionRecorder recorder;
 
         Session(MessageChannel channel, VoiceListener listener, ScheduledFuture<?> poller, LlmClient.Conversation conversation,
                 LlmClient.Conversation adultConversation, LlmClient.Conversation crudeConversation)
@@ -285,6 +287,8 @@ public class VoiceManager
     // the persona with about.txt, for answers written outside the conversation (specials)
     private final String persona;
     private final ZoneId zone;
+    // where ?chat sessions are saved, or empty; and the speech model, to label them with
+    private final String recordings, sttModel;
     // conversations with the bot by text (@mentions), per channel
     private final Map<Long, LlmClient.Conversation> textConversations = new ConcurrentHashMap<>();
     private final Map<Long, LlmClient.Conversation> textAdultConversations = new ConcurrentHashMap<>();
@@ -342,6 +346,8 @@ public class VoiceManager
         this.rice = new Rice(config.getRiceApi());
         String tz = config.getTimezone();
         this.zone = tz == null || tz.isBlank() ? ZoneId.systemDefault() : ZoneId.of(tz);
+        this.recordings = config.getVoiceRecordings();
+        this.sttModel = config.getVoiceSttModel();
     }
 
     private static SmartTurn loadSmartTurn(String model)
@@ -423,8 +429,11 @@ public class VoiceManager
         boolean adult = llm != null && nsfwLlm != null && isAgeRestricted(voiceChannel);
         if (adult)
             LOG.info("?chat in an 18+ channel: the router can switch to {} and the 18+ persona", nsfwLlm.getModel());
-        sessions.put(guildId, new Session(channel, listener, poller, llm == null ? null : llm.newConversation(),
-                adult ? nsfwLlm.newConversation() : null, crudeLlm == null ? null : crudeLlm.newConversation()));
+        Session session = new Session(channel, listener, poller, llm == null ? null : llm.newConversation(),
+                adult ? nsfwLlm.newConversation() : null, crudeLlm == null ? null : crudeLlm.newConversation());
+        session.recorder = SessionRecorder.start(recordings, guild.getName(),
+                voiceChannel instanceof net.dv8tion.jda.api.entities.channel.Channel c ? c.getName() : "voice", zone, sttModel);
+        sessions.put(guildId, session);
         guild.getAudioManager().setReceivingHandler(listener);
     }
 
@@ -437,6 +446,8 @@ public class VoiceManager
         s.turns.values().forEach(t -> t.pending.cancel(true));
         s.research.forEach(r -> r.cancel(true));
         guild.getAudioManager().setReceivingHandler(null);
+        if (s.recorder != null)
+            s.recorder.close();
     }
 
     /** Speaks text in the guild's voice channel; the bot must already be connected. */
@@ -490,7 +501,11 @@ public class VoiceManager
                 long now = System.currentTimeMillis();
                 Session session = sessions.get(guildId);
                 if (session != null)
+                {
                     session.botSaid(part);
+                    if (session.recorder != null)
+                        session.recorder.bot(BOT_NAME, part);
+                }
                 if (heardAt > 0)
                     LOG.info("Spoke in {} ms, {} ms after they stopped talking: {}", now - start, now - heardAt, part);
                 else
@@ -1368,6 +1383,11 @@ public class VoiceManager
         long sttMs = System.currentTimeMillis() - start;
         long audioMs = VoiceAudio.durationMs(wav.length - 44);
         boolean echo = !text.isBlank() && isEcho(text, session.botSaidRecently());
+        Member member = guild.getMember(user);
+        String name = member != null ? member.getEffectiveName() : user.getName();
+        // every clip is kept, with what came back for it, even silence and echoes: those are mistakes to learn from too
+        SessionRecorder recorder = session.recorder;
+        String clip = recorder == null ? null : recorder.heard(heardAt, uid, user.getName(), name, wav, text, audioMs, sttMs, echo);
         // they talked over the bot: if it was really them, it stops; if it
         // was its own voice through their speakers, it carries on
         endTalkOver(guild, session, uid, !text.isBlank() && !echo);
@@ -1380,8 +1400,6 @@ public class VoiceManager
         }
         session.lastHeard = System.currentTimeMillis();
 
-        Member member = guild.getMember(user);
-        String name = member != null ? member.getEffectiveName() : user.getName();
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
         boolean followUp = session.isFollowUp(user);
         boolean named = VoiceCommand.parse(text).addressed;
@@ -1410,12 +1428,16 @@ public class VoiceManager
             session.turns.put(uid, turn);
             turn.pending = ticker.schedule(() -> answerName(guild, session, user, turn), NAME_WAIT_MS, TimeUnit.MILLISECONDS);
             LOG.info("Heard {} ({}){}: {} -> waiting for the rest", name, heard, how, said);
+            if (recorder != null)
+                recorder.routed(clip, "chat", "", "name only", null, true, followUp, 0);
             return;
         }
 
         if (!named && !followUp && isReaction(said))
         {
             LOG.info("Heard {} ({}), a reaction, not for the bot: {}", name, heard, said);
+            if (recorder != null)
+                recorder.routed(clip, "none", "", "reaction", null, false, false, 0);
             return;
         }
         List<String> recent = session.recent();
@@ -1467,10 +1489,14 @@ public class VoiceManager
         {
             LOG.info("Heard {} ({}, router {} ms{}), not for the bot{}: {}", name, heard, routerMs, sureness(route),
                     named ? " despite the name" : "", said);
+            if (recorder != null)
+                recorder.routed(clip, "none", "", "", route, named, followUp, routerMs);
             return;
         }
         String args = route == null ? "" : route.args;
         LOG.info("Heard {} ({}, router {} ms{}){}: {} -> {} [{}]", name, heard, routerMs, sureness(route), how, said, command, args);
+        if (recorder != null)
+            recorder.routed(clip, command, command.equals("chat") ? "" : args, "", route, named, followUp, routerMs);
         if (command.equals("not_you"))
         {
             notYou(guild, session, name, said, heardAt);
