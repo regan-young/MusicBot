@@ -12,7 +12,7 @@ RUN --mount=type=cache,target=/root/.m2 \
 # volume, and the bot resolves them relative to its working directory.
 FROM eclipse-temurin:25-jre
 COPY --from=build /JMusicBot.jar /opt/jmusicbot/JMusicBot.jar
-# Smart Turn v3.2 end-of-turn model for ?interact (pipecat-ai/smart-turn-v3, BSD-2),
+# Smart Turn v3.2 end-of-turn model for ?chat (pipecat-ai/smart-turn-v3, BSD-2),
 # pinned to a revision and checksum; see smartturnmodel in reference.conf. After
 # the COPY so the directory already exists: ADD would create it with --chmod's
 # mode, without the x bit, and the bot's user couldn't read the jar.
