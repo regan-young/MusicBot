@@ -127,6 +127,7 @@
   <label title="Lines that named the bot or that it acted on"><input type="checkbox" id="forbot"> To the bot</label>
   <input type="search" id="search" placeholder="Find words">
   <label><input type="checkbox" id="autoplay" checked> Play on focus</label>
+  <label title="A line you stayed on long enough to hear and then left unchanged is marked as heard right"><input type="checkbox" id="autocheck" checked> Leaving marks right</label>
   <select id="order" title="Order of the lines">
     <option value="old">Oldest first</option><option value="new">Newest first</option>
   </select>
@@ -138,7 +139,7 @@
 <div id="bar"><div></div></div>
 <main id="list"><div id="empty">Loading…</div></main>
 <footer>
-  <span><kbd>Enter</kbd> save and next (unchanged = heard right)</span>
+  <span><kbd>Enter</kbd> save and next (unchanged = heard right; so is leaving a line you've heard)</span>
   <span><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> move without marking</span>
   <span><kbd>Ctrl</kbd>+<kbd>Space</kbd> play again</span>
   <span><kbd>Alt</kbd>+<kbd>U</kbd> use the cloud's version</span>
@@ -175,7 +176,7 @@ async function api(path, body) {
   return j;
 }
 function savePrefs() {
-  Object.assign(prefs, { show: $("show").value, forbot: $("forbot").checked, order: $("order").value, autoplay: $("autoplay").checked, speed: $("speed").value });
+  Object.assign(prefs, { show: $("show").value, forbot: $("forbot").checked, order: $("order").value, autoplay: $("autoplay").checked, autocheck: $("autocheck").checked, speed: $("speed").value });
   try { localStorage.setItem("transcripts", JSON.stringify(prefs)); } catch {}
 }
 
@@ -351,13 +352,22 @@ function next(r, back) {
 list.addEventListener("focusin", e => {
   if (e.target.tagName !== "TEXTAREA") return;
   const r = e.target.closest(".row"); current(r);
+  r.dataset.since = Date.now(); delete r.dataset.undone;
   if ($("autoplay").checked) play(r);
 });
+// long enough on a line to have heard it: as long as the clip, but no less than 0.8 s and no more than 3 s
+const heardIt = r => Date.now() - +r.dataset.since >= Math.min(Math.max(S.lines[r.dataset.i].audio_ms, 800), 3000);
 list.addEventListener("focusout", e => {
   if (e.target.tagName !== "TEXTAREA") return;
   const r = e.target.closest(".row");
+  if (!r.isConnected || r.dataset.saving) return;
   // an edit left behind is kept, not lost
-  if (r.isConnected && tidy(e.target.value) !== kept(r) && !r.dataset.saving) save(r, "fixed");
+  if (tidy(e.target.value) !== kept(r)) return save(r, "fixed");
+  // and a line heard and left as it was is taken as right, unless it's been reviewed, just undone, or is empty
+  const l = S.lines[r.dataset.i];
+  if (!$("autocheck").checked || S.corrections[l.clip] || r.dataset.undone || !tidy(e.target.value) || !heardIt(r)) return;
+  // switching to another window or app isn't leaving the line
+  setTimeout(() => { if (document.hasFocus() && !S.corrections[l.clip]) save(r, "ok"); }, 0);
 });
 list.addEventListener("input", e => {
   if (e.target.tagName !== "TEXTAREA") return;
@@ -388,7 +398,7 @@ list.addEventListener("click", e => {
   else if (e.target.classList.contains("use")) useRef(r, e.target.dataset.text);
   else if (e.target.classList.contains("save")) { r.dataset.saving = 1; save(r, "fixed").finally(() => delete r.dataset.saving); next(r); }
   else if (e.target.classList.contains("junkb")) save(r, "junk");
-  else if (e.target.classList.contains("undo")) save(r, null);
+  else if (e.target.classList.contains("undo")) { r.dataset.undone = 1; save(r, null); }
 });
 // a tap on a button leaves the line being typed in focused, so the keyboard stays up and the edit isn't saved twice
 list.addEventListener("mousedown", e => { if (e.target.closest("button")) e.preventDefault(); });
@@ -397,11 +407,12 @@ list.addEventListener("mousedown", e => { if (e.target.closest("button")) e.prev
 $("show").value = prefs.show || "all";
 $("forbot").checked = !!prefs.forbot;
 $("autoplay").checked = prefs.autoplay !== false;
+$("autocheck").checked = prefs.autocheck !== false;
 $("speed").value = prefs.speed || "1";
 $("order").value = prefs.order || "old";
 $("session").addEventListener("change", e => openSession(e.target.value).catch(err => toast(err.message)));
 for (const id of ["speaker", "show", "forbot", "order"]) $(id).addEventListener("change", () => { savePrefs(); draw(); });
-for (const id of ["autoplay", "speed"]) $(id).addEventListener("change", savePrefs);
+for (const id of ["autoplay", "autocheck", "speed"]) $(id).addEventListener("change", savePrefs);
 let typing; $("search").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(draw, 200); });
 loadSessions().catch(e => { $("empty").textContent = "Could not load: " + e.message; });
 </script>
