@@ -9,3 +9,4 @@ nb*.xml
 
 # the bot's description of itself (the *.txt rule above is for config.txt)
 !src/main/resources/about.txt
+__pycache__/

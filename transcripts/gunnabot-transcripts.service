@@ -1,0 +1,33 @@
+# The transcript corrections page, as a user service on the homelab:
+#   mkdir -p ~/gunnabot-transcripts && cp server.py index.html ~/gunnabot-transcripts/
+#   cp gunnabot-transcripts.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now gunnabot-transcripts
+#   sudo ufw allow from 192.168.0.0/24 to any port 8099 proto tcp
+#   sudo ufw allow from 172.23.0.0/16 to any port 8099 proto tcp
+# On the LAN it needs no password. From outside it is gunnabot.dimsum.party, through
+# Caddy (on the monitoring bridge, 172.23.0.0/16), which asks for one:
+#     @gunnabot host gunnabot.dimsum.party
+#     handle @gunnabot {
+#         basic_auth {
+#             admin <caddy hash-password>
+#         }
+#         reverse_proxy 172.23.0.1:8099
+#     }
+[Unit]
+Description=Gunnabot transcript corrections page
+After=network-online.target
+
+[Service]
+Environment=BIND=192.168.0.100
+Environment=PORT=8099
+Environment=PROXY_BIND=172.23.0.1
+Environment=PROXY=172.23.0.0/16
+Environment=PUBLIC=gunnabot.dimsum.party
+Environment=DATABASE=%h/musicbot/gunnabot.db
+ExecStart=/usr/bin/python3 -u %h/gunnabot-transcripts/server.py
+# the addresses aren't there until the network and Docker are up
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

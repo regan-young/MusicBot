@@ -114,6 +114,20 @@ With `voicerecordings` set, each `?chat` session is saved so speech recognition 
 
 Each clip is the audio exactly as the speech model received it (16 kHz mono WAV), named for when the speaker stopped talking, their name and their Discord ID. In `transcript.jsonl`, a `heard` line gives each clip's file, speaker and transcript; a `routed` line says what the bot made of it; a `bot` line is a sentence the bot spoke. The bot never deletes or moves recordings.
 
+## Correcting transcripts
+
+`transcripts/` is a small web page for putting right what speech recognition misheard. It lists a recorded session line by line, plays each clip as you reach it, and lets you type what was really said.
+
+- **Enter** saves and moves on. A line left unchanged is marked as heard right.
+- **Alt+J** marks a line as junk: noise, two people at once, or nobody can tell.
+- Filters show one speaker, lines said to the bot, or lines not reviewed yet.
+
+`reference.py` gets two more transcripts of every clip from cloud speech models (Voxtral Mini Transcribe 3, then Qwen3 ASR 1.7B with `--second`; about 50 cents for a three-hour session). The page flags a line as a **likely error** when the two cloud models agree with each other and not with the bot, and as **unsure** when all three differ, and offers the cloud text to use. `sttbench.py` is the comparison of 24 models the choice came from. Both need `OPENROUTER_API_KEY`, and both send the clips to OpenRouter.
+
+Reviews are kept in `corrections.json` in the session's folder, beside the clips, and mirrored into `reference_transcripts` in the history database as model `human`.
+
+The page has no login of its own. On the home network it needs none: it answers LAN clients that ask for it directly, and refuses requests that came through a proxy. From outside it is served only through Caddy, which asks for a password first (`basic_auth`), and the page answers Caddy only for its public host name. Never proxy to it without a password in front. `transcripts/gunnabot-transcripts.service` has the steps to install it and the Caddy block; it is copied to the homelab by hand and is not part of the deploy.
+
 ## Building, testing and deploying
 
 - Java 25 and Maven. `mvn -B verify` builds the jar and runs the tests.
