@@ -28,9 +28,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build image and replace the container
-        run: docker compose up --detach --build --remove-orphans
+        run: |
+          echo "STARTED_BEFORE=$(docker inspect -f '{{.State.StartedAt}}' musicbot 2>/dev/null)" >> "$GITHUB_ENV"
+          docker compose up --detach --build --remove-orphans
       - name: Wait for the bot to log in
         run: |
+          # a change that leaves the image as it was (docs, transcripts/) doesn't restart the bot
+          if [ "$(docker inspect -f '{{.State.Running}} {{.State.StartedAt}}' musicbot)" = "true $STARTED_BEFORE" ]; then
+            echo "The bot's image didn't change, so it is still running from before"; exit 0
+          fi
           for i in $(seq 1 24); do
             if docker logs --since 3m musicbot 2>&1 | grep -q "Finished Loading"; then
               echo "Bot is up"; exit 0
