@@ -114,19 +114,27 @@ With `voicerecordings` set, each `?chat` session is saved so speech recognition 
 
 Each clip is the audio exactly as the speech model received it (16 kHz mono WAV), named for when the speaker stopped talking, their name and their Discord ID. In `transcript.jsonl`, a `heard` line gives each clip's file, speaker and transcript; a `routed` line says what the bot made of it; a `bot` line is a sentence the bot spoke. The bot never deletes or moves recordings.
 
-## Correcting transcripts
+## The dashboard
 
-`transcripts/` is a small web page for putting right what speech recognition misheard. It lists a recorded session line by line, plays each clip as you reach it, and lets you type what was really said.
+`dashboard/` is a web page for watching the bot and looking after it, at https://gunnabot.dimsum.party (password) or http://192.168.0.100:8099 on the home network. It is Python's standard library and plain HTML, with no build step.
 
-- **Enter** saves and moves on. A line left unchanged is marked as heard right.
-- **Alt+J** marks a line as junk: noise, two people at once, or nobody can tell.
-- Filters show one speaker, lines said to the bot, or lines not reviewed yet.
+| Tab | What it shows |
+|---|---|
+| Overview | Whether the bot, the Mac's speech server and the coder sidecar are up, what's playing, whether anyone is talking to the bot, CPU and memory, the last session, and recent warnings |
+| Metrics | How long replies take and where the time goes, every voice session, what got played and by whom, and speech recognition per person |
+| Logs | The bot's or the sidecar's log, live or searched back through Loki, with keys and tokens masked |
+| Transcripts | A recorded session line by line, with its clip, for putting right what speech recognition misheard |
+| Config | A few settings (models, persona, voice tags, music gain, how long speech is kept), and a restart to apply them |
 
-`reference.py` gets two more transcripts of every clip from cloud speech models (Voxtral Mini Transcribe 3, then Qwen3 ASR 1.7B with `--second`; about 50 cents for a three-hour session). The page flags a line as a **likely error** when the two cloud models agree with each other and not with the bot, and as **unsure** when all three differ, and offers the cloud text to use. `sttbench.py` is the comparison of 24 models the choice came from. Both need `OPENROUTER_API_KEY`, and both send the clips to OpenRouter.
+Where the numbers come from: the history database (read only), the bot's logs in Loki for reply times ("Spoke in ... ms after they stopped talking"), Prometheus for CPU and memory, and `docker` for the containers.
 
-Reviews are kept in `corrections.json` in the session's folder, beside the clips, and mirrored into `reference_transcripts` in the history database as model `human`.
+**Transcripts.** Every line of the session is on the page; the strip down the side is the whole session, marking talk, lines to the bot, likely errors and what has been reviewed, and clicking or dragging it goes to that moment. **Enter** saves and moves on (a line left unchanged is marked as heard right, and so is a line you stayed on long enough to hear and then left), **Alt+J** marks junk, **Alt+U** takes the cloud's version. Reviews are kept in `corrections.json` in the session's folder and mirrored into `reference_transcripts` as model `human`. `reference.py` gets two more transcripts of every clip from cloud speech models (Voxtral Mini Transcribe 3, then Qwen3 ASR 1.7B with `--second`; about 50 cents for a three-hour session); a line is a **likely error** when they agree with each other and not with the bot, and **unsure** when all three differ. `sttbench.py` is the comparison of 24 models the choice came from. Both need `OPENROUTER_API_KEY` and send the clips to OpenRouter.
 
-The page has no login of its own. On the home network it needs none: it answers LAN clients that ask for it directly, and refuses requests that came through a proxy. From outside it is served only through Caddy, which asks for a password first (`basic_auth`), and the page answers Caddy only for its public host name. Never proxy to it without a password in front. `transcripts/gunnabot-transcripts.service` has the steps to install it and the Caddy block; it is copied to the homelab by hand and is not part of the deploy.
+**Config.** Only the settings listed in `settings.py` can be changed, each checked before it is written; config.txt is backed up before every change (`config.txt.bak-dashboard-*`, the last 30 kept). The bot reads its config when it starts, so the page says when a restart is waiting and has a button for it, which refuses while people are talking to the bot unless pressed again.
+
+**Access.** The page has no login of its own and can change the bot's config and restart it. On the home network it answers LAN clients that ask for it directly, and refuses requests that came through a proxy. From outside it is served only through Caddy, which asks for a password first (`basic_auth`), and the page answers Caddy only for its public host name. Never proxy to it without a password in front.
+
+**Running it.** It runs on the homelab as the user service `gunnabot-dashboard` from `~/gunnabot-dashboard`. The deploy workflow copies `dashboard/` there and restarts it on every push to master; `dashboard/gunnabot-dashboard.service` has the one-off setup and the Caddy block.
 
 ## Building, testing and deploying
 

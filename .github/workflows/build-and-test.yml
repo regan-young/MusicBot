@@ -27,6 +27,17 @@ jobs:
     concurrency: deploy
     steps:
       - uses: actions/checkout@v4
+      # the dashboard (dashboard/) runs on the host as a user service, apart from the bot
+      - name: Update the dashboard
+        run: |
+          mkdir -p ~/gunnabot-dashboard ~/.config/systemd/user
+          rsync -a --delete --exclude bench/ --exclude __pycache__/ dashboard/ ~/gunnabot-dashboard/
+          install -m 644 dashboard/gunnabot-dashboard.service ~/.config/systemd/user/gunnabot-dashboard.service
+          systemctl --user daemon-reload
+          systemctl --user enable --quiet gunnabot-dashboard
+          systemctl --user restart gunnabot-dashboard
+          sleep 2
+          systemctl --user is-active gunnabot-dashboard
       - name: Build image and replace the container
         run: |
           echo "STARTED_BEFORE=$(docker inspect -f '{{.State.StartedAt}}' musicbot 2>/dev/null)" >> "$GITHUB_ENV"

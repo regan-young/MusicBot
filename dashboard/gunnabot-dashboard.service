@@ -1,7 +1,7 @@
-# The transcript corrections page, as a user service on the homelab:
-#   mkdir -p ~/gunnabot-transcripts && cp server.py index.html ~/gunnabot-transcripts/
-#   cp gunnabot-transcripts.service ~/.config/systemd/user/
-#   systemctl --user daemon-reload && systemctl --user enable --now gunnabot-transcripts
+# The Gunnabot dashboard, as a user service on the homelab. The deploy workflow copies dashboard/
+# to ~/gunnabot-dashboard and restarts this; to set it up by hand the first time:
+#   cp gunnabot-dashboard.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now gunnabot-dashboard
 #   sudo ufw allow from 192.168.0.0/24 to any port 8099 proto tcp
 #   sudo ufw allow from 172.23.0.0/16 to any port 8099 proto tcp
 # On the LAN it needs no password. From outside it is gunnabot.dimsum.party, through
@@ -13,8 +13,9 @@
 #         }
 #         reverse_proxy 172.23.0.1:8099
 #     }
+# It runs docker (for status, logs and restarting the bot), so the user needs to be in the docker group.
 [Unit]
-Description=Gunnabot transcript corrections page
+Description=Gunnabot dashboard
 After=network-online.target
 
 [Service]
@@ -24,7 +25,11 @@ Environment=PROXY_BIND=172.23.0.1
 Environment=PROXY=172.23.0.0/16
 Environment=PUBLIC=gunnabot.dimsum.party
 Environment=DATABASE=%h/musicbot/gunnabot.db
-ExecStart=/usr/bin/python3 -u %h/gunnabot-transcripts/server.py
+Environment=CONFIG=%h/musicbot/config.txt
+Environment=RECORDINGS=%h/musicbot/recordings
+Environment=REPO=%h/actions-runner-musicbot/_work/MusicBot/MusicBot
+Environment=REFERENCE=%h/actions-runner-musicbot/_work/MusicBot/MusicBot/src/main/resources/reference.conf
+ExecStart=/usr/bin/python3 -u %h/gunnabot-dashboard/server.py
 # the addresses aren't there until the network and Docker are up
 Restart=always
 RestartSec=10
