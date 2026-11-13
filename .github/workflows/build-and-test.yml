@@ -30,6 +30,9 @@ jobs:
       # the dashboard (dashboard/) runs on the host as a user service, apart from the bot
       - name: Update the dashboard
         run: |
+          # jobs don't get the runner's session, which systemctl --user needs
+          export XDG_RUNTIME_DIR=/run/user/$(id -u)
+          export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
           mkdir -p ~/gunnabot-dashboard ~/.config/systemd/user
           rsync -a --delete --exclude bench/ --exclude __pycache__/ dashboard/ ~/gunnabot-dashboard/
           install -m 644 dashboard/gunnabot-dashboard.service ~/.config/systemd/user/gunnabot-dashboard.service
