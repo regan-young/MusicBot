@@ -957,6 +957,32 @@ public class VoiceManager
         return sb.toString();
     }
 
+    // how far back "played this past week" looks, and the most songs it lists
+    private static final long WEEK_MS = 7 * 86_400_000L;
+    private static final int WEEK_IN_CONTEXT = 40;
+
+    /**
+     * The rest of the past week's songs, beyond the few in Played earlier, so
+     * a pick of hers isn't something that was on yesterday.
+     */
+    private String weekContext(long guildId)
+    {
+        if (database == null)
+            return "";
+        long since = System.currentTimeMillis() - WEEK_MS;
+        List<BotDatabase.Play> plays = database.recentPlays(guildId, HISTORY_IN_CONTEXT + WEEK_IN_CONTEXT);
+        List<String> out = new ArrayList<>();
+        for (int i = HISTORY_IN_CONTEXT; i < plays.size(); i++)
+        {
+            BotDatabase.Play p = plays.get(i);
+            if (p.startedAt() < since)
+                break;
+            if (!p.radio())
+                out.add(BotDatabase.label(p.title(), p.author()));
+        }
+        return out.isEmpty() ? "" : " Played this past week (don't pick these when the choice is yours): " + String.join("; ", out) + ".";
+    }
+
     // ------------------------------------------------------------------ specials
 
     private static final String SPECIALS_TASK = "\n\n%s asked you about this week's supermarket specials: \"%s\". "
@@ -1367,6 +1393,7 @@ public class VoiceManager
         message.getMentions().getMembers().forEach(m -> people.add(m.getIdLong()));
         String context = TEXT_MODE + " " + timeContext() + " Player: " + player
                 + historyContext(bot.getPlayerManager().setUpHandler(guild).getHistory(), System.currentTimeMillis())
+                + weekContext(guild.getIdLong())
                 + " " + memoryContext(people) + lastSeenContext(List.of()) + tasteContext(guild.getIdLong(), member.getIdLong(), name);
         channel.sendTyping().queue();
         long start = System.currentTimeMillis();
@@ -2014,7 +2041,8 @@ public class VoiceManager
         List<String> before = recent.subList(0, Math.max(0, recent.size() - 1));
         Guild guild = session.channel instanceof net.dv8tion.jda.api.entities.channel.middleman.GuildChannel gc ? gc.getGuild() : null;
         String context = timeContext() + voiceTagsContext + " Player: " + player
-                + (guild == null ? "" : historyContext(bot.getPlayerManager().setUpHandler(guild).getHistory(), System.currentTimeMillis()))
+                + (guild == null ? "" : historyContext(bot.getPlayerManager().setUpHandler(guild).getHistory(), System.currentTimeMillis())
+                        + weekContext(guild.getIdLong()))
                 + (guild == null ? "" : " " + memoryContext(peopleInVoice(guild)) + lastSeenContext(peopleInVoice(guild))
                         + tasteContext(guild.getIdLong(), userId, name))
                 + (before.isEmpty() ? "" : " Recent conversation in the channel:\n" + String.join("\n", before));

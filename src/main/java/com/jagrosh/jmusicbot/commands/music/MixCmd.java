@@ -21,6 +21,13 @@ import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
 import com.jagrosh.jmusicbot.audio.TrackArt;
+import com.jagrosh.jmusicbot.audio.Variety;
+import com.jagrosh.jmusicbot.data.BotDatabase;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Random;
+import java.util.Set;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
@@ -147,6 +154,37 @@ public class MixCmd extends MusicCommand {
                 new MixHandler(m, event, seedId, seedTitle));
     }
 
+    // what a mix shouldn't bring back: the last week's plays, and what's playing or queued
+    private static final long RECENT_MS = 7 * 86_400_000L;
+    private static final int RECENT_PLAYS = 200;
+
+    private void recent(long guildId, AudioHandler handler, Set<String> ids, Set<String> keys) {
+        long since = System.currentTimeMillis() - RECENT_MS;
+        BotDatabase db = bot.getDatabase();
+        if (db != null) {
+            for (BotDatabase.Play p : db.recentPlays(guildId, RECENT_PLAYS)) {
+                if (p.startedAt() < since)
+                    break;
+                add(ids, keys, p.uri(), p.title(), p.author());
+            }
+        }
+        for (AudioHandler.Played p : handler.getHistory())
+            if (p.time() >= since)
+                add(ids, keys, p.uri(), p.title(), p.author());
+        AudioTrack playing = handler.getPlayer().getPlayingTrack();
+        if (playing != null)
+            add(ids, keys, playing.getInfo().uri, playing.getInfo().title, playing.getInfo().author);
+        for (QueuedTrack q : handler.getQueue().getList())
+            add(ids, keys, q.getTrack().getInfo().uri, q.getTrack().getInfo().title, q.getTrack().getInfo().author);
+    }
+
+    private static void add(Set<String> ids, Set<String> keys, String uri, String title, String author) {
+        String id = uri == null ? null : TrackArt.youtubeId(uri);
+        if (id != null)
+            ids.add(id);
+        keys.add(Variety.key(title, author));
+    }
+
     private class MixHandler implements AudioLoadResultHandler {
         private final Message m;
         private final CommandEvent event;
@@ -168,17 +206,25 @@ public class MixCmd extends MusicCommand {
             AudioTrack firstAdded = null;
             StringBuilder list = new StringBuilder();
 
+            // The mix always leads with the seed itself; the user asked for
+            // songs *like* it, so leave it out, and anything too long.
+            List<AudioTrack> candidates = new ArrayList<>();
             for (AudioTrack track : playlist.getTracks()) {
-                if (added >= wanted)
-                    break;
-                // The mix always leads with the seed itself; the user asked for
-                // songs *like* it, so leave it out.
                 if (seedId.equals(TrackArt.youtubeId(track)))
                     continue;
                 if (bot.getConfig().isTooLong(track)) {
                     skippedLong++;
                     continue;
                 }
+                candidates.add(track);
+            }
+            // and nothing played this past week or already queued, a couple per artist at most
+            Set<String> recentIds = new HashSet<>(), recentKeys = new HashSet<>();
+            recent(event.getGuild().getIdLong(), handler, recentIds, recentKeys);
+            List<AudioTrack> picked = Variety.pick(candidates, t -> TrackArt.youtubeId(t), t -> t.getInfo().title, t -> t.getInfo().author,
+                    recentIds, recentKeys, wanted, new Random());
+
+            for (AudioTrack track : picked) {
                 handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
                 if (firstAdded == null)
                     firstAdded = track;
