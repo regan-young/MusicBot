@@ -1,25 +1,38 @@
 "use strict";
 // Overview: is everything up, what's happening now, how the last session went, and what went wrong lately.
 App.register("overview", (() => {
-  let timer, page;
+  // the status every 5 s, the CPU and memory charts every minute; a section is only redrawn when what it shows has changed
+  let page, shown, res, resAt;
 
   async function mount(view) {
     page = el("div", "page");
     view.append(page);
     page.append(el("p", "muted", "Loading…"));
+    shown = {}; res = undefined; resAt = 0;
     await refresh();
-    timer = setInterval(refresh, 15000);
+    App.every(5000, refresh);
   }
 
-  function unmount() { clearInterval(timer); }
-
   async function refresh() {
-    const [o, res] = await Promise.all([api("/api/overview"), api("/api/resources?hours=24").catch(() => null)]);
-    App.last = o;
-    const keep = page.querySelector(".resources");
-    page.replaceChildren(statusCards(o), nowCards(o));
-    page.append(keep && !res ? keep : resources(res));
-    page.append(warnings(o.warnings));
+    const due = Date.now() - resAt > 60000;
+    const [o, r] = await Promise.all([api("/api/overview"), due ? api("/api/resources?hours=24").catch(() => null) : undefined]);
+    App.paintStatus(o);
+    if (due) { resAt = Date.now(); if (r || res === undefined) res = r; }
+    if (!Object.keys(shown).length) page.replaceChildren();
+    const minute = Math.floor(Date.now() / 60000); // so "5 min ago" moves on
+    const { now, ...rest } = o;
+    put("status", [rest.containers, rest.deployed, rest.voice_server, rest.activity, rest.config_pending, minute], () => statusCards(o));
+    put("now", [rest.history, rest.review, minute], () => nowCards(o));
+    put("resources", res, () => resources(res));
+    put("warnings", rest.warnings, () => warnings(o.warnings));
+  }
+
+  function put(name, key, build) {
+    const k = JSON.stringify(key);
+    if (shown[name] && shown[name].k === k) return;
+    const node = build();
+    if (shown[name]) shown[name].node.replaceWith(node); else page.append(node);
+    shown[name] = { k, node };
   }
 
   function statusCards(o) {
@@ -90,5 +103,5 @@ App.register("overview", (() => {
     return box;
   }
 
-  return { mount, unmount };
+  return { mount };
 })());

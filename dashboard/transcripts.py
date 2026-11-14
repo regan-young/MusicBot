@@ -26,6 +26,7 @@ import os
 import re
 import sqlite3
 import threading
+import zlib
 from datetime import datetime
 from pathlib import Path
 
@@ -79,14 +80,51 @@ def corrections(d):
     return got if isinstance(got, dict) else {}
 
 
+# how far back a page's lines are sent again when the session grows: the last few lines are still
+# being routed, and a clip can land a little out of order
+OVERLAP = 40
+
+
+def session(d, name, known=None, known_corrections=None, have=0):
+    """
+    A session for the page. Given the versions it already has (known, known_corrections) and how many
+    lines, only what changed: no lines when none did, the lines from "start" on when the session has
+    grown, all of them when the cloud models' opinions have changed; corrections only when they have.
+    """
+    key, got = _lines(d)
+    version = "-".join(str(k) for k in key)
+    raw = b""
+    try:
+        raw = (d / "corrections.json").read_bytes()
+    except OSError:
+        pass
+    cversion = str(zlib.crc32(raw))
+    out = {"id": name, "version": version, "cversion": cversion}
+    if known != version:
+        grown = bool(known) and have > 0 and known.split("-")[2:] == version.split("-")[2:]
+        start = max(0, min(have, len(got)) - OVERLAP) if grown else 0
+        out.update(info=read_json(d / "session.json", {}), reference=models(d), start=start, lines=got[start:])
+    if known_corrections != cversion:
+        try:
+            done = json.loads(raw) if raw else {}
+        except ValueError:
+            done = {}
+        out["corrections"] = done if isinstance(done, dict) else {}
+    return out
+
+
 def lines(d):
     """The session in the order it happened: what was heard, with how it was routed, and what the bot said."""
+    return _lines(d)[1]
+
+
+def _lines(d):
     path = d / "transcript.jsonl"
     stat = path.stat()
     key = (stat.st_mtime_ns, stat.st_size) + tuple(mtime(d / name) for name in REFERENCES)
     cached = _cache.get(str(d))
     if cached and cached[0] == key:
-        return cached[1]
+        return cached
     heard, out = {}, []
     with open(path, encoding="utf-8") as f:
         for raw in f:
@@ -118,7 +156,7 @@ def lines(d):
             continue
         line["flag"] = "likely" if len(others) > 1 and all(o == others[0] for o in others) else "unsure"
     _cache[str(d)] = (key, out)
-    return out
+    return key, out
 
 
 def sessions():

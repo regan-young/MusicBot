@@ -10,6 +10,10 @@ App.register("transcripts", (() => {
   let view = [];                  // indexes into S.lines, in the order shown
   let rows = [];                  // the row elements, same order
   let colour = {}, root, list, strip, canvas, tip, ui = {}, frame = 0, dragging = false;
+  let ticks = 0, saves = 0;
+
+  // a line's identity, which outlasts its place in the list as the session grows
+  const keyOf = l => l.bot ? "bot " + l.time + " " + l.text : l.clip;
 
   const tidy = s => s.split(/\s+/).filter(Boolean).join(" ");
   const plain = s => s.toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, " ").split(" ").filter(Boolean);
@@ -80,6 +84,7 @@ App.register("transcripts", (() => {
     addEventListener("scroll", repaintSoon, { passive: true });
     addEventListener("resize", repaintSoon);
     timelineEvents();
+    App.every(5000, live);
     return loadSessions(decodeURIComponent(rest || ""));
   }
 
@@ -101,11 +106,59 @@ App.register("transcripts", (() => {
   async function loadSessions(want) {
     list.replaceChildren(el("div", "tx-empty", "Loading…"));
     const all = await api("/api/sessions");
-    ui.session.replaceChildren(...all.map(s => el("option", { value: s.id },
-      (s.started ? fmt.when(s.started) : s.id) + " · " + (s.channel || s.guild) + " · " + s.reviewed + "/" + s.clips)));
+    sessionOptions(all);
     if (!all.length) { list.replaceChildren(el("div", "tx-empty", "No recorded sessions yet. They appear here once ?chat has been used.")); return; }
     ui.session.value = all.some(s => s.id === want) ? want : all[0].id;
     await openSession(ui.session.value);
+  }
+
+  function sessionOptions(all) {
+    ui.session.replaceChildren(...all.map(s => el("option", { value: s.id },
+      (s.started ? fmt.when(s.started) : s.id) + " · " + (s.channel || s.guild) + " · " + s.reviewed + "/" + s.clips)));
+  }
+
+  // new sessions and review counts, without moving off the one that's open (or while the list is open)
+  async function refreshSessions() {
+    if (document.activeElement === ui.session) return;
+    const all = await api("/api/sessions");
+    if (document.activeElement === ui.session) return;
+    sessionOptions(all);
+    if (S) ui.session.value = S.id;
+    else if (all.length) await openSession(all[0].id);
+  }
+
+  // every 5 s: lines heard since, and reviews made elsewhere (another tab, another device)
+  async function live() {
+    if (++ticks % 3 === 0) await refreshSessions();
+    if (!S || dragging) return;
+    const id = S.id, before = saves;
+    const got = await api("/api/session/" + encodeURIComponent(id) + "?" + new URLSearchParams({ v: S.version, cv: S.cversion, have: S.lines.length }));
+    if (!S || S.id !== id) return;
+    if (got.lines) {
+      for (const l of got.lines) l.t = Date.parse(l.time);
+      S.lines = S.lines.slice(0, got.start).concat(got.lines);
+      Object.assign(S, { version: got.version, reference: got.reference, info: got.info });
+      speakers();
+    }
+    // a review saved here while this was on its way is newer than what came back; the next tick has both
+    const reviews = got.corrections && saves === before;
+    if (reviews) Object.assign(S, { corrections: got.corrections, cversion: got.cversion });
+    if (got.lines || reviews) refresh();
+  }
+
+  // the speaker list; each person keeps their colour, and a new one gets the next
+  function speakers() {
+    const people = new Map();
+    for (const l of S.lines) if (!l.bot) people.set(l.user_id, l.name);
+    const k = JSON.stringify([...people]);
+    if (k === speakers.k) return;
+    speakers.k = k;
+    let n = Object.keys(colour).length;
+    for (const u of [...people.keys()].sort()) if (!(u in colour)) colour[u] = COLOURS[n++ % COLOURS.length];
+    const want = ui.speaker.value;
+    ui.speaker.replaceChildren(el("option", { value: "" }, "Everyone"),
+      ...[...people].sort((a, b) => a[1].localeCompare(b[1])).map(([u, n]) => el("option", { value: u }, n)));
+    ui.speaker.value = people.has(want) ? want : "";
   }
 
   async function openSession(id) {
@@ -114,35 +167,40 @@ App.register("transcripts", (() => {
     ui.session.value = id;
     history.replaceState(null, "", "#transcripts/" + encodeURIComponent(id));
     for (const l of S.lines) l.t = Date.parse(l.time);
-    const people = new Map();
-    for (const l of S.lines) if (!l.bot) people.set(l.user_id, l.name);
     colour = {};
-    [...people.keys()].sort().forEach((u, i) => colour[u] = COLOURS[i % COLOURS.length]);
-    ui.speaker.replaceChildren(el("option", { value: "" }, "Everyone"),
-      ...[...people].sort((a, b) => a[1].localeCompare(b[1])).map(([u, n]) => el("option", { value: u }, n)));
+    speakers.k = null;
+    ui.speaker.value = "";
+    speakers();
     draw();
   }
 
   // ---- the list ----
-  function draw() {
-    if (!S) return;
+  // the lines to show, as indexes into S.lines; keep: keys of lines on screen already, which stay even if they no longer match
+  function filtered(keep) {
     const who = ui.speaker.value, show = ui.show.value, forbot = ui.forbot.checked, words = tidy(ui.search.value).toLowerCase();
     const everything = !who && !words && show === "all" && !forbot;
-    view = [];
-    S.lines.forEach((l, i) => {
-      if (l.bot) { if (everything) view.push(i); return; }
+    const shows = l => {
+      if (l.bot) return everything;
       const c = S.corrections[l.clip];
-      if (who && l.user_id !== who) return;
-      if (forbot && !(l.named || l.for_bot)) return;
-      if (show === "likely" && (c || l.flag !== "likely")) return;
-      if (show === "flag" && (c || !l.flag)) return;
-      if (show === "todo" && c) return;
-      if (show === "done" && !c) return;
-      if (show === "fixed" && !(c && c.status === "fixed")) return;
-      if (words && !(l.text + " " + (c && c.text || "") + " " + (l.opinions || []).map(o => o.text).join(" ")).toLowerCase().includes(words)) return;
-      view.push(i);
-    });
-    if (ui.order.value === "new") view.reverse();
+      if (who && l.user_id !== who) return false;
+      if (forbot && !(l.named || l.for_bot)) return false;
+      if (show === "likely" && (c || l.flag !== "likely")) return false;
+      if (show === "flag" && (c || !l.flag)) return false;
+      if (show === "todo" && c) return false;
+      if (show === "done" && !c) return false;
+      if (show === "fixed" && !(c && c.status === "fixed")) return false;
+      if (words && !(l.text + " " + (c && c.text || "") + " " + (l.opinions || []).map(o => o.text).join(" ")).toLowerCase().includes(words)) return false;
+      return true;
+    };
+    const out = [];
+    S.lines.forEach((l, i) => { if (shows(l) || (keep && keep.has(keyOf(l)))) out.push(i); });
+    if (ui.order.value === "new") out.reverse();
+    return out;
+  }
+
+  function draw() {
+    if (!S) return;
+    view = filtered();
     rows = view.map(row);
     list.replaceChildren(...rows);
     if (!rows.length) list.append(el("div", "tx-empty", "Nothing matches."));
@@ -152,9 +210,39 @@ App.register("transcripts", (() => {
     repaintSoon();
   }
 
+  // after the session has grown or reviews came in from elsewhere: new lines go in and changed ones are redrawn, while
+  // the rest, the line being typed in and the scroll position stay as they were. Lines on screen stay even if they no
+  // longer match the filter, as they do after a review here.
+  function refresh() {
+    const old = new Map(rows.map(r => [r.dataset.k, r]));
+    const typing = list.querySelector("textarea")?.closest(".row");
+    const atEnd = !phone() && !typing && list.scrollTop > 0 && list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    view = filtered(new Set(old.keys()));
+    rows = view.map(i => {
+      const l = S.lines[i], r = old.get(keyOf(l));
+      if (r && (r === typing || r.dataset.sig === JSON.stringify(l))) {
+        r.dataset.i = i;
+        if (r !== typing && !l.bot) paint(r);
+        return r;
+      }
+      return row(i);
+    });
+    const wanted = new Set(rows);
+    for (const e of [...list.children]) if (!wanted.has(e)) e.remove();
+    let at = list.firstElementChild;
+    for (const r of rows) { if (r === at) at = at.nextElementSibling; else list.insertBefore(r, at); }
+    if (!rows.length) list.append(el("div", "tx-empty", "Nothing matches."));
+    // following along at the end of a live session: stay at the end
+    if (atEnd && ui.order.value === "old") list.scrollTop = list.scrollHeight;
+    counts();
+    repaintSoon();
+  }
+
   function row(i) {
     const l = S.lines[i], r = el("div", "row");
     r.dataset.i = i;
+    r.dataset.k = keyOf(l);
+    r.dataset.sig = JSON.stringify(l);
     r.append(el("span", "time", l.time.slice(11, 19)));
     if (l.bot) {
       r.classList.add("bot");
@@ -273,6 +361,7 @@ App.register("transcripts", (() => {
     if (status === "fixed" && !text) status = "junk";
     try {
       const got = await api("/api/session/" + encodeURIComponent(S.id), { clip: l.clip, status, text });
+      saves++;
       if (got.correction) S.corrections[l.clip] = got.correction; else delete S.corrections[l.clip];
       drafts.delete(l.clip);
       paint(r);

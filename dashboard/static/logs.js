@@ -50,7 +50,7 @@ App.register("logs", (() => {
       newest = entries.length ? entries[0].ts : end - 5000;
       draw(got.source);
     } catch (e) { list.replaceChildren(el("p", "muted", "Couldn't read the logs: " + e.message)); return; }
-    if (st.range === "live") timer = setInterval(poll, 3000);
+    if (st.range === "live") timer = setInterval(poll, 2000);
   }
 
   async function poll() {

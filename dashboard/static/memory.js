@@ -1,16 +1,32 @@
 "use strict";
 // Memory: what Gunnabot remembers about each person and about the group, which she brings up in conversation.
 App.register("memory", (() => {
-  let page;
+  let page, last;
 
   async function mount(view) {
     page = el("div", "page");
     view.append(page);
     page.append(el("p", "muted", "Loading…"));
     render(await api("/api/memory"));
+    // she saves memories during a session; show them as they come, but never under someone's typing
+    App.every(5000, async () => {
+      if (editing()) return;
+      const m = await api("/api/memory");
+      if (JSON.stringify(m) !== last && !editing()) render(m);
+    });
+  }
+
+  // something typed and not saved, a box being typed in, or a Forget waiting for its second click
+  function editing() {
+    const a = document.activeElement;
+    return (page.contains(a) && (a.tagName === "TEXTAREA" || a.tagName === "INPUT"))
+      || [...page.querySelectorAll("textarea")].some(t => t.value !== t.defaultValue)
+      || [...page.querySelectorAll("input")].some(i => i.value)
+      || [...page.querySelectorAll("button.danger")].some(b => b.textContent !== "Forget");
   }
 
   function render(m) {
+    last = JSON.stringify(m);
     const people = m.people.filter(p => p.notes.length);
     page.replaceChildren(
       el("p", { class: "note", style: "margin:0 0 18px" }, "She saves these herself: facts people tell her, moments the group would want remembered, and up to three highlights when a ?chat session ends. "
@@ -38,7 +54,7 @@ App.register("memory", (() => {
 
   function row(who, index, before) {
     const input = el("textarea", { rows: 1, maxlength: 300, "aria-label": "Memory" });
-    input.value = before;
+    input.defaultValue = before;
     requestAnimationFrame(() => grow(input));
     const keep = el("button", { type: "button", disabled: true }, "Save");
     let armed;

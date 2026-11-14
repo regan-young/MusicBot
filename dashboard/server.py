@@ -75,6 +75,22 @@ STATIC_FILE = re.compile(r"[a-z0-9_-]+\.(js|css|svg)")
 TYPES = {"js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8", "svg": "image/svg+xml"}
 
 
+# The page asks again every few seconds, from every open tab; answers this fresh are shared
+_memo, _memo_locks, _memo_lock = {}, {}, threading.Lock()
+
+
+def memo(key, ttl, fn):
+    with _memo_lock:
+        lock = _memo_locks.setdefault(key, threading.Lock())
+    with lock:
+        hit = _memo.get(key)
+        if hit and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+        value = fn()
+        _memo[key] = (time.monotonic(), value)
+        return value
+
+
 def overview():
     c = bot.containers()
     started = c.get(bot.BOT, {}).get("started")
@@ -141,12 +157,14 @@ class Handler(BaseHTTPRequestHandler):
                 if path.is_file():
                     return self.send(200, path.read_bytes(), TYPES[parts[1].rsplit(".", 1)[1]])
             if parts == ["api", "overview"]:
-                return self.send(200, overview())
+                return self.send(200, memo(("overview",), 3, overview))
             if parts == ["api", "resources"]:
-                return self.send(200, bot.resources(min(float(q.get("hours", 24)), 24 * 30)))
+                hours = min(float(q.get("hours", 24)), 24 * 30)
+                return self.send(200, memo(("resources", hours), 30, lambda: bot.resources(hours)))
             if parts == ["api", "metrics"]:
                 days = int(q.get("days", 30))
-                return self.send(200, stats.metrics(days if days > 0 else 0))
+                days = days if days > 0 else 0
+                return self.send(200, memo(("metrics", days), 20, lambda: stats.metrics(days)))
             if parts == ["api", "logs"]:
                 levels = tuple(l for l in q.get("levels", "").split(",") if l in ("DEBUG", "INFO", "WARN", "ERROR"))
                 return self.send(200, bot.logs(q.get("container", bot.BOT), q.get("q", "")[:200], levels,
@@ -164,9 +182,8 @@ class Handler(BaseHTTPRequestHandler):
                 d = transcripts.session_dir(parts[2])
                 if d is None:
                     return self.send(404, {"error": "no such session"})
-                return self.send(200, {"id": parts[2], "info": transcripts.read_json(d / "session.json", {}),
-                                       "reference": transcripts.models(d),
-                                       "lines": transcripts.lines(d), "corrections": transcripts.corrections(d)})
+                # v, cv and have: the versions and line count the page already has, so it gets only what changed
+                return self.send(200, transcripts.session(d, parts[2], q.get("v"), q.get("cv"), int(q.get("have", 0))))
             if len(parts) == 3 and parts[0] == "clip":
                 return self.clip(transcripts.session_dir(parts[1]), "clips/" + parts[2])
         except (ValueError, KeyError) as e:

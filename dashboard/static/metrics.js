@@ -1,17 +1,22 @@
 "use strict";
 // Metrics: how quickly the bot answers and where the time goes, what it heard, what got played, and how well it hears each person.
 App.register("metrics", (() => {
-  let page, days = Prefs.get("metricsDays", 30);
+  let page, last, days = Prefs.get("metricsDays", 30);
 
   async function mount(view) {
     page = el("div", "page");
     view.append(page);
     await load();
+    App.every(30000, () => load(true));
   }
 
-  async function load() {
-    page.replaceChildren(filters(), el("p", "muted", "Loading…"));
-    const m = await api("/api/metrics?days=" + days);
+  // quiet: a refresh in the background, which redraws only if the numbers have changed
+  async function load(quiet) {
+    if (!quiet) { last = ""; page.replaceChildren(filters(), el("p", "muted", "Loading…")); }
+    const asked = days, m = await api("/api/metrics?days=" + days);
+    const k = JSON.stringify(m);
+    if (asked !== days || (quiet && k === last)) return;
+    last = k;
     page.replaceChildren(filters(), ...render(m));
   }
 

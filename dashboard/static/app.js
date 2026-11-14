@@ -5,6 +5,7 @@ const $ = id => document.getElementById(id);
 const App = {
   tabs: {},
   current: null,
+  timers: [],
 
   register(name, tab) { this.tabs[name] = tab; },
 
@@ -12,7 +13,25 @@ const App = {
     addEventListener("hashchange", () => this.route());
     this.route();
     this.status();
-    setInterval(() => this.status(), 30000);
+    // the top bar keeps up by itself; on Overview the tab paints it from its own answer
+    setInterval(() => { if (!document.hidden && this.current?.name !== "overview") this.status(); }, 5000);
+    // back on the page after a while: catch up now rather than at the next tick
+    addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      if (this.current?.name !== "overview") this.status();
+      for (const t of this.timers) t.run();
+    });
+  },
+
+  // runs fn every ms while this tab is showing and the page is in view; one run at a time, stopped when the tab changes
+  every(ms, fn) {
+    let busy = false;
+    const run = async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try { await fn(); } catch { /* the next tick tries again */ } finally { busy = false; }
+    };
+    this.timers.push({ id: setInterval(run, ms), run });
   },
 
   // #name or #name/rest; the rest goes to the tab (the transcripts tab keeps its session there)
@@ -20,6 +39,8 @@ const App = {
     const [name, ...rest] = location.hash.slice(1).split("/");
     const tab = this.tabs[name] ? name : "overview";
     if (this.current && this.current.name === tab && this.current.tab.reroute) return this.current.tab.reroute(rest.join("/"));
+    for (const t of this.timers) clearInterval(t.id);
+    this.timers = [];
     if (this.current && this.current.tab.unmount) this.current.tab.unmount();
     for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", a.dataset.tab === tab);
     const view = $("view");
@@ -33,17 +54,18 @@ const App = {
 
   // the dot in the top bar: is the bot up, and is anyone talking to it
   async status() {
-    try {
-      const o = await api("/api/overview");
-      App.last = o;
-      const bot = o.containers.musicbot || {};
-      const s = $("topstatus");
-      s.replaceChildren();
-      if (!bot.running) s.append(el("span", "status critical", "Bot down"));
-      else if (o.activity.live) s.append(el("span", "status good", el("span", "label", "In voice now")));
-      else s.append(el("span", "status idle", el("span", "label", "Bot up, quiet")));
-      if (o.config_pending) s.append(el("a", { href: "#config", title: "Saved config changes wait for a restart" }, "· restart pending"));
-    } catch { /* the tab shows its own error */ }
+    try { this.paintStatus(await api("/api/overview")); } catch { /* the tab shows its own error */ }
+  },
+
+  paintStatus(o) {
+    App.last = o;
+    const bot = o.containers.musicbot || {};
+    const s = $("topstatus");
+    s.replaceChildren();
+    if (!bot.running) s.append(el("span", "status critical", "Bot down"));
+    else if (o.activity.live) s.append(el("span", "status good", el("span", "label", "In voice now")));
+    else s.append(el("span", "status idle", el("span", "label", "Bot up, quiet")));
+    if (o.config_pending) s.append(el("a", { href: "#config", title: "Saved config changes wait for a restart" }, "· restart pending"));
   },
 };
 
