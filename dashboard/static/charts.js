@@ -44,9 +44,9 @@ const Charts = (() => {
     return el("div", "legend", series.map(s => { const i = el("i", kind === "box" ? "box" : ""); i.style.background = s.color; return el("span", null, i, s.name); }));
   }
 
-  // series: [{name, color, points: [[x, y]]}]; x is a time in ms
+  // series: [{name, color, points: [[x, y]]}]; x is a time in ms. gap: points further apart than this aren't joined
   function line(opts) {
-    const { series, height = 190, yFormat = String, xFormat = fmt.time, yMax } = opts;
+    const { series, height = 190, yFormat = String, xFormat = fmt.time, yMax, gap = Infinity } = opts;
     const box = el("div", "chart"), tip = el("div", "tip");
     const wrap = el("div", null, legend(series), box);
     box.append(tip);
@@ -73,9 +73,10 @@ const Charts = (() => {
       if (xs.length === 1) { const t = svg("text", { class: "axis-text", x: X(x0), y: height - 6, "text-anchor": "middle" }); t.textContent = xFormat(x0); s.append(t); }
       for (const se of series) {
         const pts = se.points.filter(p => p[1] != null);
-        if (pts.length > 1) s.append(svg("path", { d: pts.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join(""),
+        if (pts.length > 1) s.append(svg("path", { d: pts.map((p, i) => (i && p[0] - pts[i - 1][0] <= gap ? "L" : "M") + X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join(""),
                                                    fill: "none", stroke: se.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
-        if (pts.length <= 40) for (const p of pts) s.append(svg("circle", { cx: X(p[0]), cy: Y(p[1]), r: 4, fill: se.color, stroke: "var(--panel)", "stroke-width": 2 }));
+        // dots when there are few points, and always for a point standing alone between gaps
+        for (const [i, p] of pts.entries()) if (pts.length <= 40 || ((!i || p[0] - pts[i - 1][0] > gap) && (i === pts.length - 1 || pts[i + 1][0] - p[0] > gap))) s.append(svg("circle", { cx: X(p[0]), cy: Y(p[1]), r: 4, fill: se.color, stroke: "var(--panel)", "stroke-width": 2 }));
       }
       const hair = svg("line", { class: "hair", y1: M.t, y2: height - M.b, visibility: "hidden" });
       const dots = series.map(se => { const c = svg("circle", { r: 4.5, fill: se.color, stroke: "var(--panel)", "stroke-width": 2, visibility: "hidden" }); s.append(c); return c; });

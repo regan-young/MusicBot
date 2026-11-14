@@ -26,7 +26,11 @@ DATABASE = os.environ.get("DATABASE", "")
 SPOKE = re.compile(r"Spoke in (\d+) ms, (\d+) ms after they stopped talking")
 LLM = re.compile(r" - LLM (\d+) ms:")
 HEARD = re.compile(r" - Heard .*?(?:after (\d+) ms|silence (\d+) ms), STT (\d+) ms, router (\d+) ms")
+# "Heard gunna (5920 ms audio, smart turn 0.95 after 205 ms, STT 2191 ms, router 778 ms, 0.81 for the bot) unnamed: what they said -> chat []"
+HEARD_REPLY = re.compile(r" - Heard (.+?) \(.*?(?:after (\d+) ms|silence (\d+) ms), STT (\d+) ms, router (\d+) ms[^)]*\)[^:]*: (.*) -> (\S+)")
+LLM_FIRST = re.compile(r" - LLM first sentence in (\d+) ms")
 DAY = 86_400_000
+HOUR = 3_600_000
 
 
 def db():
@@ -44,8 +48,8 @@ def median(values):
     return int(statistics.median(values)) if values else None
 
 
-def since(days):
-    return 0 if not days else int(time.time() * 1000) - int(days) * DAY
+def since(hours):
+    return 0 if not hours else int(time.time() * 1000) - int(hours * HOUR)
 
 
 # ---- overview ---------------------------------------------------------------
@@ -85,9 +89,9 @@ def warnings(hours=24):
 
 # ---- metrics ----------------------------------------------------------------
 
-def metrics(days=30):
-    start = since(days)
-    out = {"days": days, "sessions": [], "plays_by_day": [], "top_songs": [], "requesters": [], "speech": []}
+def metrics(hours=720):
+    start = since(hours)
+    out = {"hours": hours, "sessions": [], "plays_by_day": [], "top_songs": [], "requesters": [], "speech": []}
     if not DATABASE or not os.path.isfile(DATABASE):
         return out
     with db() as c:
@@ -161,6 +165,45 @@ def timings(sessions, start):
             s["turn"].append(int(m.group(1) or m.group(2)))
             s.setdefault("bot_stt", []).append(int(m.group(3)))
             s.setdefault("bot_router", []).append(int(m.group(4)))
+
+
+def replies(hours=1):
+    """
+    Each thing said to the bot in the last hours, oldest first, with how long each step of answering it took:
+    waiting to be sure they'd finished (turn), speech recognition, the router, the chat model's first sentence
+    and whole answer, the first sentence of speech (tts), and the whole response (from when they stopped
+    talking to the bot's first word). A step that didn't happen (a command needs no chat model) is None.
+    """
+    end = int(time.time() * 1000)
+    try:
+        found = bot.loki_lines('{container_name="%s"} |~ "after they stopped talking|LLM [0-9]+ ms:|LLM first sentence|Heard .* -> "'
+                               % bot.BOT, end - int(hours * HOUR), end)
+    except Exception as e:
+        return {"hours": hours, "replies": [], "error": type(e).__name__}
+    out, cur = [], None
+    for ts, line in found:
+        m = HEARD_REPLY.search(line)
+        if m:
+            cur = {"at": ts, "who": m.group(1), "said": m.group(6)[:160], "action": m.group(7).lower(),
+                   "turn": int(m.group(2) or m.group(3)), "stt": int(m.group(4)), "router": int(m.group(5)),
+                   "llm_first": None, "llm": None, "tts": None, "response": None}
+            out.append(cur)
+            continue
+        # the rest belongs to the last thing heard, if it was lately and that step hasn't been seen yet
+        if cur is None or ts - cur["at"] > 60_000:
+            continue
+        m = LLM_FIRST.search(line)
+        if m:
+            cur["llm_first"] = cur["llm_first"] or int(m.group(1))
+            continue
+        m = LLM.search(line)
+        if m:
+            cur["llm"] = cur["llm"] or int(m.group(1))
+            continue
+        m = SPOKE.search(line)
+        if m and cur["response"] is None:
+            cur["tts"], cur["response"] = int(m.group(1)), int(m.group(2))
+    return {"hours": hours, "replies": out[-500:]}
 
 
 def stages(sessions):

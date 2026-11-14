@@ -1,28 +1,33 @@
 "use strict";
 // Metrics: how quickly the bot answers and where the time goes, what it heard, what got played, and how well it hears each person.
 App.register("metrics", (() => {
-  let page, last, days = Prefs.get("metricsDays", 30);
+  const RANGES = Replies.RANGES.concat([[168, "7 days"], [720, "30 days"], [2160, "90 days"], [0, "All"]]);
+  let page, last, loadedAt = 0, hours = Prefs.get("metricsHours", Prefs.get("metricsDays", 30) * 24);
+  const short = () => hours > 0 && hours <= 24;
 
   async function mount(view) {
     page = el("div", "page");
     view.append(page);
     await load();
-    App.every(30000, () => load(true));
+    // the short ranges are for watching it as it happens: every 5 s; the long ones every 30 s
+    App.every(5000, () => short() || Date.now() - loadedAt > 30000 ? load(true) : null);
   }
 
   // quiet: a refresh in the background, which redraws only if the numbers have changed
   async function load(quiet) {
     if (!quiet) { last = ""; page.replaceChildren(filters(), el("p", "muted", "Loading…")); }
-    const asked = days, m = await api("/api/metrics?days=" + days);
-    const k = JSON.stringify(m);
-    if (asked !== days || (quiet && k === last)) return;
+    const asked = hours;
+    const [m, r] = await Promise.all([api("/api/metrics?hours=" + hours), short() ? Replies.load(hours) : null]);
+    loadedAt = Date.now();
+    const k = JSON.stringify([m, r, short() ? Math.floor(Date.now() / 60000) : 0]);
+    if (asked !== hours || (quiet && k === last)) return;
     last = k;
-    page.replaceChildren(filters(), ...render(m));
+    page.replaceChildren(filters(), ...(r ? [Replies.render(r, hours)] : []), ...render(m));
   }
 
   function filters() {
     return el("div", "filters", el("span", "muted", "Range"),
-      seg([[7, "7 days"], [30, "30 days"], [90, "90 days"], [0, "All"]], days, v => { days = v; Prefs.set("metricsDays", v); load(); }));
+      seg(RANGES, hours, v => { hours = v; Prefs.set("metricsHours", v); load(); }));
   }
 
   function render(m) {

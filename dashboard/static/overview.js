@@ -1,29 +1,40 @@
 "use strict";
 // Overview: is everything up, what's happening now, how the last session went, and what went wrong lately.
 App.register("overview", (() => {
-  // the status every 5 s, the CPU and memory charts every minute; a section is only redrawn when what it shows has changed
-  let page, shown, res, resAt;
+  // everything every 5 s (CPU and memory every minute on the longer ranges); a section is only redrawn when what it shows has changed
+  let page, shown, res, resAt, replies, hours = Prefs.get("overviewHours", 1);
 
   async function mount(view) {
     page = el("div", "page");
     view.append(page);
     page.append(el("p", "muted", "Loading…"));
-    shown = {}; res = undefined; resAt = 0;
+    shown = {}; res = undefined; resAt = 0; replies = undefined;
     await refresh();
     App.every(5000, refresh);
   }
 
+  function range(v) {
+    hours = v; Prefs.set("overviewHours", v);
+    res = undefined; resAt = 0; replies = undefined;
+    refresh().catch(e => toast(e.message));
+  }
+
   async function refresh() {
-    const due = Date.now() - resAt > 60000;
-    const [o, r] = await Promise.all([api("/api/overview"), due ? api("/api/resources?hours=24").catch(() => null) : undefined]);
+    const asked = hours, due = Date.now() - resAt > (hours <= 1 ? 4000 : 60000);
+    const [o, r, rep] = await Promise.all([api("/api/overview"), due ? api("/api/resources?hours=" + hours).catch(() => null) : undefined,
+      Replies.load(hours)]);
     App.paintStatus(o);
+    if (asked !== hours) return;
+    replies = rep;
     if (due) { resAt = Date.now(); if (r || res === undefined) res = r; }
     if (!Object.keys(shown).length) page.replaceChildren();
     const minute = Math.floor(Date.now() / 60000); // so "5 min ago" moves on
     const { now, ...rest } = o;
     put("status", [rest.containers, rest.deployed, rest.voice_server, rest.activity, rest.config_pending, minute], () => statusCards(o));
     put("now", [rest.history, rest.review, minute], () => nowCards(o));
-    put("resources", res, () => resources(res));
+    put("range", hours, () => el("div", "filters", el("span", "muted", "Range"), seg(Replies.RANGES, hours, range)));
+    put("replies", [hours, replies, minute], () => Replies.render(replies, hours));
+    put("resources", [hours, res], () => resources(res));
     put("warnings", rest.warnings, () => warnings(o.warnings));
   }
 
@@ -79,16 +90,17 @@ App.register("overview", (() => {
   }
 
   function resources(res) {
-    const box = el("section", "block resources", el("h2", null, "CPU and memory, last 24 hours"));
+    const box = el("section", "block resources", el("h2", null, "CPU and memory, last " + Replies.label(hours)));
     if (!res || (!Object.keys(res.cpu || {}).length && !Object.keys(res.memory || {}).length)) {
       box.append(el("p", "muted", "Prometheus didn't answer" + (res && res.error ? " (" + res.error + ")" : "") + "."));
       return box;
     }
     const names = [["musicbot", "Bot", "var(--s1)"], ["musicbot-coder", "Coder sidecar", "var(--s2)"]];
+    const x = hours <= 1 ? t => new Date(t).toLocaleTimeString("en-NZ", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : fmt.time;
     const series = key => names.filter(([n]) => res[key][n]).map(([n, label, color]) => ({ name: label, color, points: res[key][n] }));
     box.append(el("div", "grid wide",
-      card("CPU, in cores", Charts.line({ series: series("cpu"), yFormat: v => v < 0.1 ? v.toFixed(3) : v.toFixed(2), height: 170 })),
-      card("Memory", Charts.line({ series: series("memory"), yFormat: fmt.bytes, height: 170 }))));
+      card("CPU, in cores", Charts.line({ series: series("cpu"), yFormat: v => v < 0.1 ? v.toFixed(3) : v.toFixed(2), xFormat: x, height: 170 })),
+      card("Memory", Charts.line({ series: series("memory"), yFormat: fmt.bytes, xFormat: x, height: 170 }))));
     return box;
   }
 

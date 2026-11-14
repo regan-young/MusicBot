@@ -209,9 +209,11 @@ def resources(hours=24):
     """CPU (cores) and memory (bytes) of both containers over the last hours, from Prometheus."""
     end = int(time.time())
     start = end - int(hours * 3600)
-    step = max(60, int(hours * 3600 / 240))
+    # Prometheus has a sample every 15 s: short ranges get every one, and CPU averaged over a minute, not five
+    step = max(15, int(hours * 3600 / 240))
+    window = "1m" if hours <= 1 else "5m"
     queries = {
-        "cpu": 'sum by (name) (rate(container_cpu_usage_seconds_total{name=~"%s"}[5m]))',
+        "cpu": 'sum by (name) (rate(container_cpu_usage_seconds_total{name=~"%s"}[' + window + ']))',
         "memory": 'sum by (name) (container_memory_working_set_bytes{name=~"%s"})',
     }
     out = {"step": step}

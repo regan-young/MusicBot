@@ -104,7 +104,11 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "gunnabot-dashboard"
 
     def log_message(self, fmt, *args):
-        if not self.path.startswith(("/clip/", "/static/", "/api/logs", "/api/overview")):
+        # the page polls these every few seconds; log only what isn't routine
+        quiet = self.command == "GET" and args[1:2] == ("200",) and self.path.startswith((
+            "/clip/", "/static/", "/api/logs", "/api/overview", "/api/replies", "/api/resources",
+            "/api/session/", "/api/memory", "/api/metrics", "/api/sessions"))
+        if not quiet:
             print(self.headers.get("X-Forwarded-For", self.client_address[0]) if self.headers else "-", fmt % args, flush=True)
 
     def local(self):
@@ -159,12 +163,16 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "overview"]:
                 return self.send(200, memo(("overview",), 3, overview))
             if parts == ["api", "resources"]:
-                hours = min(float(q.get("hours", 24)), 24 * 30)
-                return self.send(200, memo(("resources", hours), 30, lambda: bot.resources(hours)))
+                hours = max(0.25, min(float(q.get("hours", 24)), 24 * 30))
+                return self.send(200, memo(("resources", hours), 4 if hours <= 1 else 30, lambda: bot.resources(hours)))
             if parts == ["api", "metrics"]:
-                days = int(q.get("days", 30))
-                days = days if days > 0 else 0
-                return self.send(200, memo(("metrics", days), 20, lambda: stats.metrics(days)))
+                hours = float(q["hours"]) if "hours" in q else float(q.get("days", 30)) * 24
+                hours = max(0.25, hours) if hours > 0 else 0
+                fresh = 4 if 0 < hours <= 24 else 20
+                return self.send(200, memo(("metrics", hours), fresh, lambda: stats.metrics(hours)))
+            if parts == ["api", "replies"]:
+                hours = max(0.25, min(float(q.get("hours", 1)), 24 * 7))
+                return self.send(200, memo(("replies", hours), 3, lambda: stats.replies(hours)))
             if parts == ["api", "logs"]:
                 levels = tuple(l for l in q.get("levels", "").split(",") if l in ("DEBUG", "INFO", "WARN", "ERROR"))
                 return self.send(200, bot.logs(q.get("container", bot.BOT), q.get("q", "")[:200], levels,
