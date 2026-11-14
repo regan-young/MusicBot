@@ -41,7 +41,7 @@ const Replies = (() => {
     box.append(el("div", "grid wide",
       card("Whole response, per reply", Charts.line({ series: [{ name: "Response", color: "var(--accent)", points: answered.map(p => [p.at, p.response]) }],
         yFormat: fmt.ms, xFormat: x, height: 190, gap: GAP })),
-      card("Each step, per reply", Charts.line({ series: steps, yFormat: fmt.ms, xFormat: x, height: 190, gap: GAP }))));
+      card("Each step, per reply", Charts.area({ series: steps, yFormat: fmt.ms, xFormat: x, height: 190, gap: GAP, totalLabel: "All steps" }))));
     const recent = r.replies.slice(-15).reverse();
     box.append(el("div", { class: "card", style: "margin-top:14px" }, el("h3", null, "Latest"), table(recent, [
       ["Time", p => clock(p.at)], ["Who", p => p.who],

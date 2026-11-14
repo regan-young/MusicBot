@@ -102,6 +102,78 @@ const Charts = (() => {
     return wrap;
   }
 
+  // stacked filled areas: series [{name, color, points: [[x, y]]}], first at the bottom; a missing value counts as 0.
+  // gap: points further apart than this aren't joined, and a point on its own is drawn as a thin bar
+  function area(opts) {
+    const { series, height = 190, yFormat = String, xFormat = fmt.time, gap = Infinity, totalLabel = "Total" } = opts;
+    const box = el("div", "chart"), tip = el("div", "tip");
+    const wrap = el("div", null, legend(series, "box"), box);
+    box.append(tip);
+    const xs = [...new Set(series.flatMap(s => s.points.map(p => p[0])))].sort((a, b) => a - b);
+    if (!xs.length) { box.append(el("div", "empty", "No data in this range.")); return wrap; }
+    // value of each series at each x, and the running totals that make the layers
+    const at = series.map(s => new Map(s.points.map(p => [p[0], p[1] || 0])));
+    const tops = [];
+    let below = xs.map(() => 0);
+    for (const m of at) { const top = xs.map((x, i) => below[i] + (m.get(x) || 0)); tops.push([below, top]); below = top; }
+    const totals = below;
+    // runs of points close enough together to join
+    const runs = [];
+    xs.forEach((x, i) => { if (i && x - xs[i - 1] <= gap) runs[runs.length - 1].push(i); else runs.push([i]); });
+    responsive(box, w => {
+      box.querySelector("svg")?.remove();
+      const s = svg("svg", { viewBox: `0 0 ${w} ${height}`, height });
+      const x0 = xs[0], x1 = xs[xs.length - 1] === x0 ? x0 + 1 : xs[xs.length - 1];
+      const ticks = niceTicks(Math.max(...totals, 0));
+      const top = ticks[ticks.length - 1] || 1;
+      const X = v => M.l + (xs.length === 1 ? (w - M.l - M.r) / 2 : (v - x0) / (x1 - x0) * (w - M.l - M.r));
+      const Y = v => M.t + (1 - v / top) * (height - M.t - M.b);
+      for (const t of ticks) {
+        s.append(svg("line", { class: "grid-line", x1: M.l, x2: w - M.r, y1: Y(t), y2: Y(t) }));
+        const label = svg("text", { class: "axis-text", x: M.l - 8, y: Y(t) + 4, "text-anchor": "end" }); label.textContent = yFormat(t); s.append(label);
+      }
+      const n = Math.max(2, Math.min(6, Math.floor((w - M.l - M.r) / 110)));
+      for (let i = 0; i < n && xs.length > 1; i++) {
+        const v = x0 + (x1 - x0) * i / (n - 1);
+        const t = svg("text", { class: "axis-text", x: X(v), y: height - 6, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" });
+        t.textContent = xFormat(v); s.append(t);
+      }
+      series.forEach((se, k) => {
+        const [lo, hi] = tops[k];
+        for (const run of runs) {
+          let d;
+          if (run.length === 1) {
+            const i = run[0], x = X(xs[i]);
+            if (hi[i] <= lo[i]) continue;
+            d = `M${x - 2},${Y(lo[i])}H${x + 2}V${Y(hi[i])}H${x - 2}Z`;
+          } else {
+            d = run.map((i, j) => (j ? "L" : "M") + X(xs[i]).toFixed(1) + "," + Y(hi[i]).toFixed(1)).join("")
+              + run.slice().reverse().map(i => "L" + X(xs[i]).toFixed(1) + "," + Y(lo[i]).toFixed(1)).join("") + "Z";
+          }
+          // a thin line of the panel colour on each layer keeps neighbouring fills apart
+          s.append(svg("path", { d, fill: se.color, stroke: "var(--panel)", "stroke-width": 1, "stroke-linejoin": "round" }));
+        }
+      });
+      const hair = svg("line", { class: "hair", y1: M.t, y2: height - M.b, visibility: "hidden" });
+      s.append(hair);
+      const hit = svg("rect", { x: M.l, y: 0, width: w - M.l - M.r, height, fill: "transparent" });
+      s.append(hit);
+      hit.addEventListener("pointermove", e => {
+        const r = s.getBoundingClientRect(), px = (e.clientX - r.left) * (w / r.width);
+        let best = 0;
+        xs.forEach((v, i) => { if (Math.abs(X(v) - px) < Math.abs(X(xs[best]) - px)) best = i; });
+        hair.setAttribute("x1", X(xs[best])); hair.setAttribute("x2", X(xs[best])); hair.setAttribute("visibility", "visible");
+        // top layer first, as they're stacked on screen
+        const rows = series.map((se, k) => ({ color: se.color, value: yFormat(at[k].get(xs[best]) || 0), label: se.name })).reverse();
+        rows.push({ value: yFormat(totals[best]), label: totalLabel });
+        tipAt(tip, box, X(xs[best]) * r.width / w, e.clientY - r.top, rows, xFormat(xs[best]));
+      });
+      hit.addEventListener("pointerleave", () => { hair.setAttribute("visibility", "hidden"); tip.style.display = "none"; });
+      box.prepend(s);
+    });
+    return wrap;
+  }
+
   // bars: [{label, value, tip?}] in order; one colour
   function bars(opts) {
     const { data, height = 170, color = "var(--s1)", yFormat = String, name = "" } = opts;
@@ -166,5 +238,5 @@ const Charts = (() => {
       shown.map(p => { const i = el("i", "box"); i.style.background = p.color; return el("span", null, i, p.name + " ", el("b", { style: "color:var(--text)" }, format(p.value))); })));
   }
 
-  return { line, bars, stack };
+  return { line, area, bars, stack };
 })();
