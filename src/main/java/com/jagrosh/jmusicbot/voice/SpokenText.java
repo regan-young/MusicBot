@@ -61,6 +61,24 @@ final class SpokenText
         return matching >= Math.ceil(words.size() * 0.75);
     }
 
+    /**
+     * What to say to someone joining the voice channel. A display name can hold
+     * emoji, markdown, links or "[tags]" the voice would read out, so only
+     * letters, digits and a few joining marks are kept.
+     */
+    static String greeting(String displayName)
+    {
+        String name = LlmClient.forSpeech(displayName == null ? "" : displayName)
+                .replaceAll("\\[[^\\]]*\\]", "")
+                .replaceAll("https?://\\S+", "")
+                .replaceAll("[^\\p{L}\\p{N} '.-]", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (name.length() > 32)
+            name = name.substring(0, 32).trim();
+        return name.isEmpty() ? "Oh hey there" : "Oh hey, " + name;
+    }
+
     private static List<String> words(String text)
     {
         List<String> out = new ArrayList<>();

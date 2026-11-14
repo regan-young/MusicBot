@@ -15,7 +15,12 @@
  */
 package com.jagrosh.jmusicbot;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.channel.middleman.AudioChannel;
+import net.dv8tion.jda.api.entities.channel.unions.AudioChannelUnion;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
@@ -35,7 +40,9 @@ import org.slf4j.LoggerFactory;
  */
 public class Listener extends ListenerAdapter
 {
+    private static final long GREET_COOLDOWN_MS = 60_000;
     private final Bot bot;
+    private final Map<Long, Long> greeted = new ConcurrentHashMap<>();
     
     public Listener(Bot bot)
     {
@@ -82,9 +89,31 @@ public class Listener extends ListenerAdapter
     public void onGuildVoiceUpdate(@NotNull GuildVoiceUpdateEvent event)
     {
         bot.getAloneInVoiceHandler().onVoiceUpdate(event);
+        greet(event);
         if (!event.getMember().getUser().isBot())
             bot.getLastSeen().voice(event.getMember().getIdLong(), event.getMember().getEffectiveName(),
                     System.currentTimeMillis());
+    }
+
+    /** Greets someone who joined the channel the bot is in, if the server has ?greet on. */
+    private void greet(GuildVoiceUpdateEvent event)
+    {
+        AudioChannelUnion joined = event.getChannelJoined();
+        Member member = event.getMember();
+        Guild guild = event.getGuild();
+        if (joined == null || member.getUser().isBot() || !bot.getVoiceManager().isEnabled()
+                || !bot.getSettingsManager().getSettings(guild).isGreet())
+            return;
+        AudioChannel here = guild.getAudioManager().getConnectedChannel();
+        if (here == null || here.getIdLong() != joined.getIdLong())
+            return;
+        // someone bouncing in and out shouldn't be greeted every time
+        long now = System.currentTimeMillis();
+        Long before = greeted.get(member.getIdLong());
+        if (before != null && now - before < GREET_COOLDOWN_MS)
+            return;
+        greeted.put(member.getIdLong(), now);
+        bot.getVoiceManager().greet(guild, member.getEffectiveName());
     }
 
     @Override

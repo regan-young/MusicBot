@@ -61,6 +61,9 @@ public class SettingsManager implements GuildSettingsManager<Settings>
                         o.has("prefix")          ? o.getString("prefix")                     : null,
                         o.has("skip_ratio")      ? o.getDouble("skip_ratio")                 : -1,
                         o.has("queue_type")      ? o.getEnum(QueueType.class, "queue_type")  : QueueType.FAIR));
+
+                // off unless switched on, so servers saved before ?greet existed stay quiet
+                settings.get(Long.parseLong(id)).greet = o.optBoolean("greet", false);
             });
         } catch (NoSuchFileException e) {
             // create an empty json file
@@ -124,6 +127,8 @@ public class SettingsManager implements GuildSettingsManager<Settings>
                 o.put("skip_ratio", s.getSkipRatio());
             if(s.getQueueType() != QueueType.FAIR)
                 o.put("queue_type", s.getQueueType().name());
+            if(s.isGreet())
+                o.put("greet", true);
             obj.put(Long.toString(key), o);
         });
         try {

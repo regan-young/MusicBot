@@ -475,6 +475,12 @@ public class VoiceManager
             s.recorder.close();
     }
 
+    /** Says "Oh hey, name" in the voice channel the bot is in. */
+    public void greet(Guild guild, String displayName)
+    {
+        speak(guild, SpokenText.greeting(displayName));
+    }
+
     /** Speaks text in the guild's voice channel; the bot must already be connected. */
     public void speak(Guild guild, String text)
     {

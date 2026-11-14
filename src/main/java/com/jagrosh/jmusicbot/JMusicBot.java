@@ -227,6 +227,7 @@ public class JMusicBot {
                         new QueueTypeCmd(bot),
                         new SetdjCmd(bot),
                         new SkipratioCmd(bot),
+                        new GreetCmd(bot),
                         new SettcCmd(bot),
                         new SetvcCmd(bot),
 

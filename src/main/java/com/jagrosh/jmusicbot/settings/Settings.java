@@ -39,6 +39,7 @@ public class Settings implements GuildSettingsProvider
     private QueueType queueType;
     private String prefix;
     private double skipRatio;
+    boolean greet;
 
     public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, String defaultPlaylist, RepeatMode repeatMode, String prefix, double skipRatio, QueueType queueType)
     {
@@ -130,6 +131,12 @@ public class Settings implements GuildSettingsProvider
         return skipRatio;
     }
 
+    /** Whether the bot greets people who join its voice channel by name. */
+    public boolean isGreet()
+    {
+        return greet;
+    }
+
     public QueueType getQueueType()
     {
         return queueType;
@@ -187,6 +194,12 @@ public class Settings implements GuildSettingsProvider
     public void setSkipRatio(double skipRatio)
     {
         this.skipRatio = skipRatio;
+        this.manager.writeSettings();
+    }
+
+    public void setGreet(boolean greet)
+    {
+        this.greet = greet;
         this.manager.writeSettings();
     }
 
