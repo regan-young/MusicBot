@@ -200,7 +200,7 @@ table.data td.title { max-width: 0; width: 100%; overflow: hidden; text-overflow
   #view { overflow: visible; }
   .top { gap: 8px; padding: 0 8px; }
   .brand, #topstatus .label, #topstatus a { display: none; }
-  nav a { padding: 0 9px; }
+  nav a { padding: 0 6px; font-size: 14px; }
   .page { padding: 14px 12px 60px; }
   .grid.wide { grid-template-columns: 1fr; }
   select, input[type=search], input[type=text], input[type=number], textarea.field, .row textarea { font-size: 16px; }
@@ -239,9 +239,9 @@ table.data td.title { max-width: 0; width: 100%; overflow: hidden; text-overflow
 
 /* memory */
 .memories { display: flex; flex-direction: column; gap: 6px; }
-.memory { display: flex; gap: 6px; align-items: center; }
-.memory input { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font: inherit; font-size: 14px; }
-.memory input:focus { outline: none; border-color: var(--accent); }
+.memory { display: flex; gap: 6px; align-items: flex-start; }
+.memory input, .memory textarea { flex: 1; resize: none; overflow: hidden; line-height: 1.4; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font: inherit; font-size: 14px; }
+.memory input:focus, .memory textarea:focus { outline: none; border-color: var(--accent); }
 .memory.add { margin-top: 4px; }
 .memory button { padding: 5px 10px; white-space: nowrap; }
 .block > .memories { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }

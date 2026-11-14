@@ -13,7 +13,7 @@ App.register("memory", (() => {
   function render(m) {
     const people = m.people.filter(p => p.notes.length);
     page.replaceChildren(
-      el("p", "note", "She saves these herself: facts people tell her, moments the group would want remembered, and up to three highlights when a ?chat session ends. "
+      el("p", { class: "note", style: "margin:0 0 18px" }, "She saves these herself: facts people tell her, moments the group would want remembered, and up to three highlights when a ?chat session ends. "
         + "She sees the shared memories and the facts about whoever's in voice every time she replies. Changes here apply on her next reply, no restart needed."),
       el("section", "block", el("h2", null, "Shared memories", el("small", "muted", " " + m.group.length + " of 40, oldest first; the newest 20 are in her context")),
         entry("group", m.group, "Something the group would want her to remember")),
@@ -37,14 +37,16 @@ App.register("memory", (() => {
   }
 
   function row(who, index, before) {
-    const input = el("input", { type: "text", value: before, maxlength: 300, "aria-label": "Memory" });
+    const input = el("textarea", { rows: 1, maxlength: 300, "aria-label": "Memory" });
+    input.value = before;
+    requestAnimationFrame(() => grow(input));
     const keep = el("button", { type: "button", disabled: true }, "Save");
     let armed;
     const drop = el("button", { type: "button", class: "danger" }, "Forget");
-    input.addEventListener("input", () => keep.disabled = !input.value.trim() || input.value === before);
+    input.addEventListener("input", () => { grow(input); keep.disabled = !input.value.trim() || input.value === before; });
     input.addEventListener("keydown", e => {
-      if (e.key === "Enter" && !keep.disabled) keep.click();
-      if (e.key === "Escape") { input.value = before; keep.disabled = true; }
+      if (e.key === "Enter") { e.preventDefault(); if (!keep.disabled) keep.click(); }
+      if (e.key === "Escape") { input.value = before; keep.disabled = true; grow(input); }
     });
     keep.addEventListener("click", () => save({ who, index, before, text: input.value }, "Saved."));
     drop.addEventListener("click", () => {
@@ -53,6 +55,9 @@ App.register("memory", (() => {
     });
     return el("div", "memory", input, keep, drop);
   }
+
+  // a box as tall as its text, so a long memory reads in full
+  function grow(t) { t.style.height = "auto"; t.style.height = t.scrollHeight + 2 + "px"; }
 
   async function save(body, done) {
     try {
