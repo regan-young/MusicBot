@@ -236,3 +236,13 @@ table.data td.title { max-width: 0; width: 100%; overflow: hidden; text-overflow
   .log .ts { font-size: 11px; }
   .log .lv { display: none; }
 }
+
+/* memory */
+.memories { display: flex; flex-direction: column; gap: 6px; }
+.memory { display: flex; gap: 6px; align-items: center; }
+.memory input { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font: inherit; font-size: 14px; }
+.memory input:focus { outline: none; border-color: var(--accent); }
+.memory.add { margin-top: 4px; }
+.memory button { padding: 5px 10px; white-space: nowrap; }
+.block > .memories { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+@media (max-width: 700px) { .memory button { min-height: 38px; } .memory input { min-height: 38px; } }

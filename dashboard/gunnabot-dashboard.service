@@ -26,6 +26,7 @@ Environment=PROXY=172.23.0.0/16
 Environment=PUBLIC=gunnabot.dimsum.party
 Environment=DATABASE=%h/musicbot/gunnabot.db
 Environment=CONFIG=%h/musicbot/config.txt
+Environment=MEMORY=%h/musicbot/voice-memory.json
 Environment=RECORDINGS=%h/musicbot/recordings
 Environment=REPO=%h/actions-runner-musicbot/_work/MusicBot/MusicBot
 Environment=REFERENCE=%h/actions-runner-musicbot/_work/MusicBot/MusicBot/src/main/resources/reference.conf

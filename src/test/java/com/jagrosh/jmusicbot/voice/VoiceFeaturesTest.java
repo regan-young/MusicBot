@@ -56,6 +56,46 @@ public class VoiceFeaturesTest
     }
 
     @Test
+    public void remembersTheGroupAndSeesOutsideEdits() throws Exception
+    {
+        Path file = Files.createTempFile("memory", ".json");
+        Files.delete(file);
+        VoiceMemory memory = new VoiceMemory(file);
+        memory.rememberGroup("Sam and Devon have a running joke about Clem's rapier");
+        memory.rememberGroup("sam and devon have a running joke about clem's rapier"); // a duplicate
+        memory.rememberGroup("Fri 14 Nov: Regan sang the whole of Bohemian Rhapsody.");
+        assertEquals(2, memory.groupNotes().size());
+        assertEquals("Sam and Devon have a running joke about Clem's rapier. Fri 14 Nov: Regan sang the whole of Bohemian Rhapsody.",
+                memory.describeGroup());
+        // the group isn't a person
+        assertEquals("", memory.describe(List.of(1L)));
+
+        // the dashboard edits the file while the bot runs
+        Thread.sleep(20);
+        Files.writeString(file, "{\"group\": {\"name\": \"Everyone\", \"notes\": [\"Edited by hand\"]}}");
+        Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 5000));
+        assertEquals(List.of("Edited by hand"), memory.groupNotes());
+        memory.remember(1, "Regan", "Regan supports the Blues");
+        assertEquals(List.of("Edited by hand"), new VoiceMemory(file).groupNotes());
+
+        for (int i = 0; i < VoiceMemory.MAX_GROUP + 5; i++)
+            memory.rememberGroup("moment " + i);
+        assertEquals(VoiceMemory.MAX_GROUP, memory.groupNotes().size());
+        assertTrue(memory.describeGroup().startsWith("moment " + (VoiceMemory.MAX_GROUP + 5 - VoiceMemory.GROUP_IN_CONTEXT) + "."));
+        Files.deleteIfExists(file);
+    }
+
+    @Test
+    public void parsesSessionMemories()
+    {
+        assertEquals(List.of("Devon carried a game", "Clem bought a rapier"),
+                VoiceManager.parseMemories("Sure! {\"memories\": [\"Devon carried a game\", \" \", \"Clem bought a rapier\"]}"));
+        assertEquals(List.of(), VoiceManager.parseMemories("{\"memories\": []}"));
+        assertEquals(List.of(), VoiceManager.parseMemories("nothing stood out"));
+        assertEquals(List.of(), VoiceManager.parseMemories(null));
+    }
+
+    @Test
     public void remindersFireAndSurviveARestart() throws Exception
     {
         Path file = Files.createTempFile("reminders", ".json");
@@ -225,6 +265,9 @@ public class VoiceFeaturesTest
         assertEquals(Type.FORGET, LlmClient.parseDecision("{\"action\":\"forget\",\"reply\":\"Done.\"}").action);
         LlmClient.Decision m = LlmClient.parseDecision("{\"action\":\"chat\",\"remember\":\"Regan supports the Blues\",\"reply\":\"Nice.\"}");
         assertEquals("Regan supports the Blues", m.remember);
+        LlmClient.Decision g = LlmClient.parseDecision("{\"action\":\"chat\",\"remember_group\":\"Sam's birthday is 3 March\",\"reply\":\"Noted.\"}");
+        assertEquals("Sam's birthday is 3 March", g.rememberGroup);
+        assertEquals("", m.rememberGroup);
     }
 
     @Test

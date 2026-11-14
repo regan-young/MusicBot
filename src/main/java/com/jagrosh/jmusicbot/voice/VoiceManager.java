@@ -473,6 +473,7 @@ public class VoiceManager
         guild.getAudioManager().setReceivingHandler(null);
         if (s.recorder != null)
             s.recorder.close();
+        rememberSession(guild, s);
     }
 
     /** Says "Oh hey, name" in the voice channel the bot is in. */
@@ -732,8 +733,9 @@ public class VoiceManager
 
     private String memoryContext(List<Long> people)
     {
-        String known = memory.describe(people);
-        return known.isEmpty() ? "" : "What you remember about people here: " + known;
+        String known = memory.describe(people), shared = memory.describeGroup();
+        return (known.isEmpty() ? "" : "What you remember about people here: " + known)
+                + (shared.isEmpty() ? "" : (known.isEmpty() ? "" : " ") + "Your shared memories with this group, oldest first: " + shared);
     }
 
     // favourites are counted over this long, and worked out again this often
@@ -796,6 +798,79 @@ public class VoiceManager
     {
         memory.remember(user.getIdLong(), name, fact);
         LOG.info("Remembering about {}: {}", name, fact);
+    }
+
+    private void rememberGroup(String fact)
+    {
+        memory.rememberGroup(fact);
+        LOG.info("Remembering for the group: {}", fact);
+    }
+
+    // a session needs this many lines heard before it's worth looking back on, and this many at most are read
+    private static final int SESSION_MEMORY_MIN_LINES = 30, SESSION_MEMORY_LINES = 1500, SESSION_MEMORIES = 3;
+    private static final String SESSION_MEMORY_TASK = "You are Gunnabot, the music bot in a Discord voice channel where "
+            + "a group of friends hang out, usually while playing Dota 2. Below is a voice chat session that just ended, "
+            + "oldest first, as speech recognition heard it: expect misheard words and names, and several conversations "
+            + "mixed together. Pick out at most %d things from it worth remembering next time, the way a friend would: a "
+            + "running joke that started, a memorable game or moment, plans they made, news someone shared, a song that "
+            + "became a moment, something funny you said or did. Skip routine music requests, commands and small talk, and "
+            + "never keep anything sensitive (health, money, passwords, addresses) or unkind. Each memory is one short "
+            + "sentence in the past tense with names, such as \"Devon carried a Terrorblade game and wouldn't stop talking "
+            + "about it\". Don't repeat what you already remember: %s. If nothing stands out, give none. Reply with only "
+            + "a JSON object: {\"memories\": [\"...\"]}.";
+
+    /** When a ?chat session ends: picks out a few moments worth remembering and keeps them as shared memories. */
+    private void rememberSession(Guild guild, Session s)
+    {
+        if (database == null || llm == null)
+            return;
+        long guildId = guild.getIdLong(), started = s.startedAt;
+        String day = java.time.ZonedDateTime.now(zone).format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", java.util.Locale.ENGLISH));
+        CompletableFuture.supplyAsync(() -> database.conversation(guildId, started, started, zone, BOT_NAME, SESSION_MEMORY_LINES), llmCalls)
+                .thenCompose(said ->
+                {
+                    if (said.lines().count() < SESSION_MEMORY_MIN_LINES)
+                        return CompletableFuture.completedFuture("");
+                    String known = memory.describeGroup();
+                    return llm.complete(String.format(SESSION_MEMORY_TASK, SESSION_MEMORIES, known.isEmpty() ? "nothing yet" : known),
+                            said, 600);
+                })
+                .whenComplete((answer, e) ->
+                {
+                    if (e != null)
+                    {
+                        LOG.warn("Could not look back on the session", e);
+                        return;
+                    }
+                    List<String> kept = parseMemories(answer);
+                    for (String m : kept.subList(0, Math.min(kept.size(), SESSION_MEMORIES)))
+                        rememberGroup(day + ": " + m);
+                });
+    }
+
+    /** The {"memories": [...]} answer as a list; empty for anything else. */
+    static List<String> parseMemories(String content)
+    {
+        List<String> out = new ArrayList<>();
+        int start = content == null ? -1 : content.indexOf('{'), end = content == null ? -1 : content.lastIndexOf('}');
+        if (start < 0 || end <= start)
+            return out;
+        try
+        {
+            org.json.JSONArray a = new org.json.JSONObject(content.substring(start, end + 1)).optJSONArray("memories");
+            if (a != null)
+                for (int i = 0; i < a.length(); i++)
+                {
+                    String m = a.optString(i, "").trim();
+                    if (!m.isEmpty() && m.length() <= 300)
+                        out.add(m);
+                }
+        }
+        catch (org.json.JSONException ignored)
+        {
+            // nothing worth keeping
+        }
+        return out;
     }
 
     /** Reminders and forgetting, by voice or text. Returns what to say back. */
@@ -1293,6 +1368,8 @@ public class VoiceManager
                     d.reply);
             if (!d.remember.isEmpty())
                 remember(member.getUser(), name, d.remember);
+            if (!d.rememberGroup.isEmpty())
+                rememberGroup(d.rememberGroup);
             String reply = d.post.isEmpty() ? d.reply : (d.reply + "\n" + d.post).trim();
             String playback = PLAYBACK.get(d.action);
             if (playback != null)
@@ -1734,6 +1811,8 @@ public class VoiceManager
                 post(session, d.post);
             if (!d.remember.isEmpty())
                 remember(user, name, d.remember);
+            if (!d.rememberGroup.isEmpty())
+                rememberGroup(d.rememberGroup);
             if (d.action == VoiceCommand.Type.SPECIALS)
             {
                 specialsInVoice(guild, session, user, name, said, d.query, LlmClient.forSpeech(d.reply), heardAt);

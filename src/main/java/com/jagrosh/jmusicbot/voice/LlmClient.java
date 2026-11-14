@@ -54,7 +54,7 @@ public class LlmClient
             + "search for (play, radio and mix), the song's name or its number in the queue as digits (skipto), the product they're asking about (specials), or the person's name "
             + "(allow_coder and revoke_coder), otherwise empty; "
             + "\"task\": for research, remind, history, recap, introspect and code only (and allow_coder, when a change is asked for too), otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
-            + "usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
+            + "usually empty; \"remember_group\": usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
             + "out loud}. "
             + "Use play when they want a song, artist or album played or queued (query = what to search YouTube for), "
             + "radio for a live radio station or radio of a genre (query = station name or genre), mix for several "
@@ -96,10 +96,15 @@ public class LlmClient
             + "in the context), reply = a short confirmation. Use cancel_reminders when they want their reminders "
             + "cancelled. When the speaker tells you something lasting about themselves that a friend would remember "
             + "(favourite music, teams, what they're into, plans, a running joke), or asks you to remember something, "
-            + "set remember to one short fact in the third person (\"Regan supports the Blues\"); never remember "
-            + "anything sensitive (health, money, passwords, addresses). Use forget when they ask you to forget what "
-            + "you know about them. What you already remember about people is in the context; use it naturally, "
-            + "without reciting it. "
+            + "set remember to one short fact in the third person (\"Regan supports the Blues\"). When something "
+            + "happens or is said that the group would want you to remember (a running joke being born, a memorable "
+            + "game or moment, plans they make together, a lasting fact about someone else here such as a birthday), "
+            + "or someone asks you to remember something about the group, set remember_group to one short sentence "
+            + "with names (\"Sam and Devon have a running joke about Clem's rapier\"). Both are usually empty: keep "
+            + "only what a friend would still bring up next week, never routine requests, and never anything sensitive "
+            + "(health, money, passwords, addresses) or unkind. Use forget when they ask you to forget what you know "
+            + "about them. What you remember about people and your shared memories with the group are in the "
+            + "context; bring them up naturally now and then when they fit, as a friend would, without reciting them. "
             + "Use specials when they ask about supermarket or grocery specials, deals or what's cheap this week "
             + "(Pak'nSave, New World, Woolworths, or New World's mailer): query = the product they're after, or empty "
             + "for the best deals overall, and reply = a short holding line; the deals are looked up for you. "
@@ -150,10 +155,11 @@ public class LlmClient
                             .put("task", new JSONObject().put("type", "string"))
                             .put("minutes", new JSONObject().put("type", "number"))
                             .put("remember", new JSONObject().put("type", "string"))
+                            .put("remember_group", new JSONObject().put("type", "string"))
                             .put("post", new JSONObject().put("type", "string"))
                             .put("reply", new JSONObject().put("type", "string")))
                     .put("required", new JSONArray().put("action").put("query").put("task").put("minutes")
-                            .put("remember").put("post").put("reply"))));
+                            .put("remember").put("remember_group").put("post").put("reply"))));
 
     private final HttpClient http;
     // reading a streamed answer blocks, so it gets its own threads
@@ -227,24 +233,26 @@ public class LlmClient
         /**
          * query: a music search, the product asked about for specials, or a person's name for the coder whitelist;
          * task: what to research, the reminder, a question about the bot's own code, or the change to make to it;
-         * remember: a fact about the speaker to keep; post: text for the Discord channel
+         * remember: a fact about the speaker to keep; rememberGroup: a shared memory of the group to keep;
+         * post: text for the Discord channel
          */
-        public final String query, task, remember, post, reply;
+        public final String query, task, remember, rememberGroup, post, reply;
         /** For a reminder: minutes from now. */
         public final double minutes;
         Decision(VoiceCommand.Type action, String query, String reply)
         {
-            this(action, query, "", 0, "", "", reply);
+            this(action, query, "", 0, "", "", "", reply);
         }
 
-        Decision(VoiceCommand.Type action, String query, String task, double minutes, String remember, String post,
-                String reply)
+        Decision(VoiceCommand.Type action, String query, String task, double minutes, String remember, String rememberGroup,
+                String post, String reply)
         {
             this.action = action;
             this.query = query;
             this.task = task;
             this.minutes = minutes;
             this.remember = remember;
+            this.rememberGroup = rememberGroup;
             this.post = post;
             this.reply = reply;
         }
@@ -258,7 +266,7 @@ public class LlmClient
         public synchronized void remember(String said)
         {
             JSONObject reply = new JSONObject().put("action", "chat").put("query", "").put("task", "").put("minutes", 0)
-                    .put("remember", "").put("post", "").put("reply", said);
+                    .put("remember", "").put("remember_group", "").put("post", "").put("reply", said);
             history.add(new JSONObject().put("role", "assistant").put("content", reply.toString()));
             while (history.size() > HISTORY_MESSAGES)
                 history.removeFirst();
@@ -438,6 +446,7 @@ public class LlmClient
         String task = o.optString("task", "").trim();
         String post = o.optString("post", "").trim();
         String remember = o.optString("remember", "").trim();
+        String rememberGroup = o.optString("remember_group", "").trim();
         double minutes = o.optDouble("minutes", 0);
         if (Double.isNaN(minutes))
             minutes = 0;
@@ -470,7 +479,7 @@ public class LlmClient
             case "list_coders":  action = VoiceCommand.Type.LIST_CODERS; break;
             default:       action = VoiceCommand.Type.CHAT;
         }
-        return new Decision(action, query, task, minutes, remember, post, reply);
+        return new Decision(action, query, task, minutes, remember, rememberGroup, post, reply);
     }
 
     /** Strips markdown and emoji so the reply reads cleanly through text-to-speech. */

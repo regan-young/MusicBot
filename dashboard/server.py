@@ -44,6 +44,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 import bot
+import memory
 import settings
 import stats
 import transcripts
@@ -155,6 +156,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "config"]:
                 started = bot.containers().get(bot.BOT, {}).get("started")
                 return self.send(200, {"keys": settings.editable(), "pending": settings.changed_since(started)})
+            if parts == ["api", "memory"]:
+                return self.send(200, memory.read())
             if parts == ["api", "sessions"]:
                 return self.send(200, transcripts.sessions())
             if len(parts) == 3 and parts[:2] == ["api", "session"]:
@@ -226,6 +229,17 @@ class Handler(BaseHTTPRequestHandler):
             got = bot.restart(bool(body.get("force")))
             print("bot restart from the dashboard:", "done" if got["ok"] else got["error"], flush=True)
             return self.send(200 if got["ok"] else 409 if got.get("busy") else 500, got)
+        if parts == ["api", "memory"]:
+            try:
+                return self.send(200, memory.edit(body.get("who"), body.get("index"), body.get("before"), body.get("text", "")))
+            except ValueError as e:
+                return self.send(400, {"error": str(e)})
+            except KeyError as e:
+                return self.send(404, {"error": e.args[0]})
+            except LookupError as e:
+                return self.send(409, {"error": str(e)})
+            except OSError as e:
+                return self.send(500, {"error": "could not save: %s" % e})
         if len(parts) == 3 and parts[:2] == ["api", "session"]:
             return self.review(parts[2], body)
         self.send(404, {"error": "not found"})
