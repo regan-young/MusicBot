@@ -21,7 +21,7 @@ import com.jagrosh.jmusicbot.voice.Greetings;
 /**
  * ?greeting <text>: what the bot says when you join its voice channel, with
  * {name} for your name. ?greeting on its own shows yours; ?greeting off goes
- * back to "Oh hey, name". Greetings only play when an admin has ?greet on.
+ * back to the usual long welcome speech. Greetings only play when an admin has ?greet on.
  */
 public class GreetingCmd extends Command
 {
@@ -48,7 +48,7 @@ public class GreetingCmd extends Command
         if (arg.isEmpty())
         {
             String mine = greetings.get(id);
-            event.reply(mine.isEmpty() ? "You get the usual \"Oh hey, " + event.getMember().getEffectiveName() + "\". Set your own with `"
+            event.reply(mine.isEmpty() ? "You get a long, over-the-top welcome speech. Set your own with `"
                     + prefix + name + " <text>`; `{name}` becomes your name." : "Your greeting: " + mine);
             return;
         }

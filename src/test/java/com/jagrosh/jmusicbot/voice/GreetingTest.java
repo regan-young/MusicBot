@@ -1,6 +1,8 @@
 package com.jagrosh.jmusicbot.voice;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -48,6 +50,28 @@ public class GreetingTest
         assertEquals("", g.set(1, "Sam", "")); // back to the usual
         assertEquals("", new Greetings(file).get(1));
         java.nio.file.Files.deleteIfExists(file);
+    }
+
+    @Test
+    public void welcomeSpeechesAreLongAndVary()
+    {
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < 6; i++)
+        {
+            String w = SpokenText.welcome("Sam 😎", "", new java.util.Random(i));
+            assertTrue(w.contains("Sam"));
+            assertFalse(w.contains("{"));
+            assertTrue(w.length() > 150);
+            seen.add(w);
+        }
+        assertTrue(seen.size() > 1);
+        assertTrue(SpokenText.welcome("😎", null, new java.util.Random(1)).contains("my friend"));
+    }
+
+    @Test
+    public void ownGreetingOverridesTheSpeech()
+    {
+        assertEquals("The legend Sam has arrived!", SpokenText.welcome("Sam", "The legend {name} has arrived!", new java.util.Random(1)));
     }
 
     @Test

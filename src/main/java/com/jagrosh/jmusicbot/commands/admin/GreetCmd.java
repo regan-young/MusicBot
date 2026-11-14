@@ -19,7 +19,7 @@ import com.jagrosh.jmusicbot.commands.AdminCommand;
 import com.jagrosh.jmusicbot.settings.Settings;
 
 /**
- * Switches the spoken "Oh hey, name" greeting for people joining the voice channel.
+ * Switches the spoken welcome speech for people joining the voice channel.
  */
 public class GreetCmd extends AdminCommand
 {

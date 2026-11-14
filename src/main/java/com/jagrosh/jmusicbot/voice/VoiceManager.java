@@ -477,10 +477,10 @@ public class VoiceManager
         rememberSession(guild, s);
     }
 
-    /** Greets someone joining the voice channel the bot is in: with their own greeting, or "Oh hey, name". */
+    /** Greets someone joining the voice channel the bot is in: with their own greeting, or a long over-the-top welcome speech. */
     public void greet(Guild guild, long userId, String displayName)
     {
-        speak(guild, SpokenText.greeting(displayName, greetings.get(userId)));
+        speak(guild, SpokenText.welcome(displayName, greetings.get(userId), java.util.concurrent.ThreadLocalRandom.current()));
     }
 
     public Greetings getGreetings()

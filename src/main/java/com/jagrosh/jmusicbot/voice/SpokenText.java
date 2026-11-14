@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Random;
 import java.util.Set;
 
 /**
@@ -68,6 +69,13 @@ final class SpokenText
      */
     static String greeting(String displayName)
     {
+        String name = cleanName(displayName);
+        return name.isEmpty() ? "Oh hey there" : "Oh hey, " + name;
+    }
+
+    /** A display name with nothing the voice would read out, cut short; empty if nothing is left. */
+    private static String cleanName(String displayName)
+    {
         String name = LlmClient.forSpeech(displayName == null ? "" : displayName)
                 .replaceAll("\\[[^\\]]*\\]", "")
                 .replaceAll("https?://\\S+", "")
@@ -76,7 +84,42 @@ final class SpokenText
                 .trim();
         if (name.length() > 32)
             name = name.substring(0, 32).trim();
-        return name.isEmpty() ? "Oh hey there" : "Oh hey, " + name;
+        return name;
+    }
+
+    // {name} is the person joining. Several sentences each, since they're spoken one by one.
+    private static final String[] WELCOMES = {
+        "Ladies and gentlemen, hush your chatter and lift your eyes. {name} has entered the building! "
+            + "Somewhere a choir of angels just cleared its throat. The room is warmer, the music is better, "
+            + "and the snacks taste fresher, all because you showed up. Welcome, {name}. We are honoured.",
+        "Attention, everyone! A very important person has just joined us. Roll out the red carpet, polish the "
+            + "chandeliers and cue the trumpets, because {name} is here! We have waited all day for this moment. "
+            + "Take a seat, take a bow, and make yourself completely at home.",
+        "Welcome, welcome, a thousand welcomes, {name}! Let it be known across the land that you have arrived. "
+            + "The bards will write songs about this moment. The dragons are putting down their swords. "
+            + "Pull up a chair, friend, because the party just got a whole lot better.",
+        "Breaking news from the voice channel! Sources confirm that {name} has just walked in, and the crowd is "
+            + "going wild. Experts say this is the best thing to happen all week. "
+            + "So please, {name}, enjoy the tunes, enjoy the company, and know that you are very, very welcome here.",
+        "Drumroll please! Dum dum dum dum dum! Presenting the one, the only, the magnificent {name}! "
+            + "You light up the room like a disco ball at midnight. We promise to laugh at your jokes, "
+            + "play your favourite songs and save you the comfiest seat. Welcome in, {name}!",
+        "Greetings, {name}, and welcome to the finest voice channel in all of Discord. We have music, we have "
+            + "good vibes, and now we have you, which makes everything just perfect. "
+            + "Stretch your legs, grab a drink, and let the good times roll!"
+    };
+
+    /**
+     * What to say to someone joining the voice channel with ?greet on: their
+     * own greeting if they've set one, otherwise one of several long, over the
+     * top welcome speeches picked at random.
+     */
+    static String welcome(String displayName, String custom, Random random)
+    {
+        if (custom != null && !custom.isBlank())
+            return greeting(displayName, custom);
+        String name = cleanName(displayName);
+        return WELCOMES[random.nextInt(WELCOMES.length)].replace("{name}", name.isEmpty() ? "my friend" : name);
     }
 
     /**
