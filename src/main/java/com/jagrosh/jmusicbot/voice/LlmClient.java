@@ -50,8 +50,8 @@ public class LlmClient
     static final String ACTIONS = "\n\nYou also control the music bot you are part of. For every message, reply with "
             + "only a JSON object, no other text, with the keys in this order: {\"action\": one of \"play\", \"radio\", "
             + "\"mix\", \"skip\", \"skipto\", \"pause\", \"resume\", \"stop\", \"research\", \"remind\", \"cancel_reminders\", "
-            + "\"forget\", \"specials\", \"history\", \"recap\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
-            + "search for (play, radio and mix), the song's name or its number in the queue as digits (skipto), the product they're asking about (specials), or the person's name "
+            + "\"forget\", \"greeting\", \"specials\", \"history\", \"recap\", \"introspect\", \"code\", \"allow_coder\", \"revoke_coder\", \"list_coders\", \"chat\"; \"query\": what to "
+            + "search for (play, radio and mix), the song's name or its number in the queue as digits (skipto), the product they're asking about (specials), the greeting (greeting), or the person's name "
             + "(allow_coder and revoke_coder), otherwise empty; "
             + "\"task\": for research, remind, history, recap, introspect and code only (and allow_coder, when a change is asked for too), otherwise empty; \"minutes\": for remind only, otherwise 0; \"remember\": "
             + "usually empty; \"remember_group\": usually empty; \"post\": text to post in the Discord text channel, usually empty; \"reply\": what to say "
@@ -105,6 +105,9 @@ public class LlmClient
             + "(health, money, passwords, addresses) or unkind. Use forget when they ask you to forget what you know "
             + "about them. What you remember about people and your shared memories with the group are in the "
             + "context; bring them up naturally now and then when they fit, as a friend would, without reciting them. "
+            + "Use greeting when the speaker wants to choose what you say when they join the voice channel: query = "
+            + "their greeting, written as they want it said, with {name} where their name goes if it has it, or empty "
+            + "to go back to the usual hello; reply = a short confirmation. "
             + "Use specials when they ask about supermarket or grocery specials, deals or what's cheap this week "
             + "(Pak'nSave, New World, Woolworths, or New World's mailer): query = the product they're after, or empty "
             + "for the best deals overall, and reply = a short holding line; the deals are looked up for you. "
@@ -149,7 +152,7 @@ public class LlmClient
                     .put("properties", new JSONObject()
                             .put("action", new JSONObject().put("type", "string").put("enum", new JSONArray()
                                     .put("play").put("radio").put("mix").put("skip").put("skipto").put("pause").put("resume").put("stop")
-                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("specials").put("history").put("recap").put("introspect").put("code")
+                                    .put("research").put("remind").put("cancel_reminders").put("forget").put("greeting").put("specials").put("history").put("recap").put("introspect").put("code")
                                     .put("allow_coder").put("revoke_coder").put("list_coders").put("chat")))
                             .put("query", new JSONObject().put("type", "string"))
                             .put("task", new JSONObject().put("type", "string"))
@@ -469,6 +472,7 @@ public class LlmClient
             case "remind": action = task.isEmpty() || minutes <= 0 ? VoiceCommand.Type.CHAT : VoiceCommand.Type.REMIND; break;
             case "cancel_reminders": action = VoiceCommand.Type.CANCEL_REMINDERS; break;
             case "forget": action = VoiceCommand.Type.FORGET; break;
+            case "greeting": action = VoiceCommand.Type.GREETING; break;
             case "specials": action = VoiceCommand.Type.SPECIALS; break;
             case "history": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.MUSIC_HISTORY; break;
             case "recap": action = task.isEmpty() ? VoiceCommand.Type.CHAT : VoiceCommand.Type.RECAP; break;

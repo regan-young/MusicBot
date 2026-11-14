@@ -29,7 +29,7 @@ public final class VoiceCommand
 {
     // RADIO, MIX and RESEARCH only come from the LLM; keyword parsing doesn't produce them
     public enum Type { PLAY, RADIO, MIX, SKIP, SKIP_TO, PAUSE, RESUME, STOP, NOW_PLAYING, RESEARCH, REMIND, CANCEL_REMINDERS, FORGET, SPECIALS, MUSIC_HISTORY, RECAP, INTROSPECT, CODE, ALLOW_CODER, REVOKE_CODER,
-        LIST_CODERS, CHAT }
+        LIST_CODERS, GREETING, CHAT }
 
     public final Type type;
     /** The song query for PLAY and SKIP_TO, the original transcript for CHAT, otherwise empty. */

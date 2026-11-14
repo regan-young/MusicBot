@@ -263,6 +263,9 @@ public class VoiceFeaturesTest
         // a reminder without a time isn't one
         assertEquals(Type.CHAT, LlmClient.parseDecision("{\"action\":\"remind\",\"task\":\"x\",\"minutes\":0,\"reply\":\"When?\"}").action);
         assertEquals(Type.FORGET, LlmClient.parseDecision("{\"action\":\"forget\",\"reply\":\"Done.\"}").action);
+        LlmClient.Decision greet = LlmClient.parseDecision("{\"action\":\"greeting\",\"query\":\"The legend {name} has arrived\",\"reply\":\"Love it.\"}");
+        assertEquals(Type.GREETING, greet.action);
+        assertEquals("The legend {name} has arrived", greet.query);
         LlmClient.Decision m = LlmClient.parseDecision("{\"action\":\"chat\",\"remember\":\"Regan supports the Blues\",\"reply\":\"Nice.\"}");
         assertEquals("Regan supports the Blues", m.remember);
         LlmClient.Decision g = LlmClient.parseDecision("{\"action\":\"chat\",\"remember_group\":\"Sam's birthday is 3 March\",\"reply\":\"Noted.\"}");

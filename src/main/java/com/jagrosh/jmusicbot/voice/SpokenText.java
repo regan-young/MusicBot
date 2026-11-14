@@ -79,6 +79,32 @@ final class SpokenText
         return name.isEmpty() ? "Oh hey there" : "Oh hey, " + name;
     }
 
+    /**
+     * Someone's own greeting, with {name} as their display name, cleaned the
+     * same way as a name (no emoji, markdown, links or [tags] for the voice to
+     * read out) but keeping sentence punctuation. Falls back to the usual
+     * greeting when they haven't set one or nothing speakable is left.
+     */
+    static String greeting(String displayName, String custom)
+    {
+        String usual = greeting(displayName);
+        if (custom == null || custom.isBlank())
+            return usual;
+        String name = usual.startsWith("Oh hey, ") ? usual.substring("Oh hey, ".length()) : "you";
+        String text = LlmClient.forSpeech(custom)
+                .replaceAll("\\[[^\\]]*\\]", "")
+                .replaceAll("https?://\\S+", "")
+                .replaceAll("[^\\p{L}\\p{N}{} '.,!?:;&-]", "")
+                .replace("{name}", "\u0000")
+                .replaceAll("[{}]", "")
+                .replace("\u0000", name)
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (text.length() > Greetings.MAX_LENGTH + 32)
+            text = text.substring(0, Greetings.MAX_LENGTH + 32).trim();
+        return text.replaceAll("[\\p{P}\\s]", "").isEmpty() ? usual : text;
+    }
+
     private static List<String> words(String text)
     {
         List<String> out = new ArrayList<>();

@@ -113,7 +113,7 @@ public class Listener extends ListenerAdapter
         if (before != null && now - before < GREET_COOLDOWN_MS)
             return;
         greeted.put(member.getIdLong(), now);
-        bot.getVoiceManager().greet(guild, member.getEffectiveName());
+        bot.getVoiceManager().greet(guild, member.getIdLong(), member.getEffectiveName());
     }
 
     @Override

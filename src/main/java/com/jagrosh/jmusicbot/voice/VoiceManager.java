@@ -285,6 +285,7 @@ public class VoiceManager
     private final VoiceRouter router;
     private final Researcher researcher;
     private final VoiceMemory memory = new VoiceMemory(Path.of("voice-memory.json"));
+    private final Greetings greetings = new Greetings(Path.of("voice-greetings.json"));
     private final Reminders reminders;
     private final Coder coder;
     private final Rice rice;
@@ -476,10 +477,15 @@ public class VoiceManager
         rememberSession(guild, s);
     }
 
-    /** Says "Oh hey, name" in the voice channel the bot is in. */
-    public void greet(Guild guild, String displayName)
+    /** Greets someone joining the voice channel the bot is in: with their own greeting, or "Oh hey, name". */
+    public void greet(Guild guild, long userId, String displayName)
     {
-        speak(guild, SpokenText.greeting(displayName));
+        speak(guild, SpokenText.greeting(displayName, greetings.get(userId)));
+    }
+
+    public Greetings getGreetings()
+    {
+        return greetings;
     }
 
     /** Speaks text in the guild's voice channel; the bot must already be connected. */
@@ -888,6 +894,15 @@ public class VoiceManager
                 int n = reminders.cancel(member.getGuild().getIdLong(), member.getIdLong());
                 return n == 0 ? "You don't have any reminders with me." : n == 1 ? "Done, I've cancelled your reminder."
                         : "Done, I've cancelled your " + n + " reminders.";
+            case GREETING:
+            {
+                String kept = greetings.set(member.getIdLong(), member.getEffectiveName(), d.query);
+                LOG.info("Greeting for {}: {}", member.getEffectiveName(), kept.isEmpty() ? "the usual" : kept);
+                if (!reply.isEmpty())
+                    return reply;
+                return kept.isEmpty() ? "Done, you'll get the usual hello." : "Done. Next time you join, I'll say: "
+                        + SpokenText.greeting(member.getEffectiveName(), kept);
+            }
             case FORGET:
                 memory.forget(member.getIdLong());
                 bot.getLastSeen().forget(member.getIdLong());
@@ -1384,6 +1399,7 @@ public class VoiceManager
             {
                 case REMIND:
                 case CANCEL_REMINDERS:
+                case GREETING:
                 case FORGET:
                     textReply(message, personal(d, member, channel, reply));
                     return;
@@ -2042,6 +2058,7 @@ public class VoiceManager
         {
             case REMIND:
             case CANCEL_REMINDERS:
+            case GREETING:
             case FORGET:
                 speak(guild, personal(d, member, session.channel, reply), heardAt);
                 break;

@@ -220,6 +220,7 @@ public class JMusicBot {
                         new ExplicitCmd(bot),
                         new CrudeCmd(bot),
                         new LastSeenCmd(bot),
+                        new GreetingCmd(bot),
                         new VolumeCmd(bot),
                         new KaraokeCmd(bot),
 
