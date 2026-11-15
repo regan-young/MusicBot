@@ -63,7 +63,7 @@ def main():
         os.replace(tmp, path)
 
     failed, cost, started, fresh = 0, 0.0, time.time(), {}
-    with ThreadPoolExecutor(8) as pool:
+    with ThreadPoolExecutor(int(os.environ.get("WORKERS", "8"))) as pool:
         for n, (clip, got) in enumerate(zip(todo, pool.map(lambda c: sttbench.attempt(model, os.path.join(session, c)), todo)), 1):
             if "error" in got:
                 failed += 1
