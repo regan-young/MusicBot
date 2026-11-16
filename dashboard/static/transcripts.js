@@ -3,7 +3,7 @@
 // Every line is on the page at once (the browser skips drawing the ones out of sight); a line only becomes a text box
 // while you're on it. The strip down the side is the whole session: click or drag it to go anywhere.
 App.register("transcripts", (() => {
-  const COLOURS = ["#7cc4ff", "#f0b354", "#6fcf8e", "#e39cf5", "#ff9d8a", "#8fe0d6", "#d6d36a", "#a9b4ff", "#f58fb5"];
+  const COLOURS = ["#1f6fd1", "#b05f00", "#16834d", "#8e3fb8", "#c4422b", "#0b7f78", "#6f6a00", "#4450c4", "#b8336f"];
   const audio = new Audio();
   const drafts = new Map();       // clip -> text typed but not saved (a save that failed)
   let S = null;                   // the open session: {id, lines, corrections, reference}
@@ -57,7 +57,7 @@ App.register("transcripts", (() => {
         el("span", null, el("kbd", null, "Alt"), "+", el("kbd", null, "U"), " use the cloud's version"),
         el("span", null, el("kbd", null, "Alt"), "+", el("kbd", null, "J"), " junk"),
         el("span", null, el("kbd", null, "Esc"), " put the text back"),
-        el("span", "lg", "Timeline:", el("i", { style: "background:#4a505c" }), "talk", el("i", { style: "background:var(--s1)" }), "to the bot",
+        el("span", "lg", "Timeline:", el("i", { style: "background:#aab0ba" }), "talk", el("i", { style: "background:var(--s1)" }), "to the bot",
           el("i", { style: "background:var(--flag)" }), "likely errors left", el("i", { style: "background:var(--ok)" }), "reviewed")));
     viewEl.append(root);
 
@@ -487,7 +487,7 @@ App.register("transcripts", (() => {
     // hour and half-hour marks
     if (!narrow) {
       g.font = "10px system-ui, sans-serif";
-      g.fillStyle = "#8b93a1"; g.strokeStyle = "#2a2e37";
+      g.fillStyle = "#6b717c"; g.strokeStyle = "#e1e3e7";
       const step = (t1 - t0) > 4 * 3600_000 ? 3600_000 : 1800_000;
       for (let t = Math.ceil(t0 / step) * step; t < t1; t += step) {
         const y = ypos(t, t0, t1, h);
@@ -497,10 +497,10 @@ App.register("transcripts", (() => {
     }
     for (let b = 0; b < bins; b++) {
       const y = b * bh;
-      if (talk[b]) { g.fillStyle = "#4a505c"; g.fillRect(cols.talk[0], y, Math.max(1, cols.talk[1] * talk[b] / most), Math.max(1, bh - .5)); }
-      if (bot[b]) { g.fillStyle = "#3987e5"; g.fillRect(cols.bot[0], y, cols.bot[1], Math.max(1.5, bh)); }
-      if (flag[b]) { g.fillStyle = "#f58fb5"; g.fillRect(cols.flag[0], y, cols.flag[1], Math.max(1.5, bh)); }
-      if (done[b]) { g.fillStyle = "#6fcf8e"; g.fillRect(cols.done[0], y, cols.done[1], Math.max(1.5, bh)); }
+      if (talk[b]) { g.fillStyle = "#aab0ba"; g.fillRect(cols.talk[0], y, Math.max(1, cols.talk[1] * talk[b] / most), Math.max(1, bh - .5)); }
+      if (bot[b]) { g.fillStyle = "#2a78d6"; g.fillRect(cols.bot[0], y, cols.bot[1], Math.max(1.5, bh)); }
+      if (flag[b]) { g.fillStyle = "#c2417a"; g.fillRect(cols.flag[0], y, cols.flag[1], Math.max(1.5, bh)); }
+      if (done[b]) { g.fillStyle = "#16834d"; g.fillRect(cols.done[0], y, cols.done[1], Math.max(1.5, bh)); }
     }
     // the part of the session on screen
     const seen = onScreen();
@@ -508,12 +508,12 @@ App.register("transcripts", (() => {
       let a = ypos(S.lines[view[seen[0]]].t, t0, t1, h), z = ypos(S.lines[view[seen[1]]].t, t0, t1, h);
       if (a > z) [a, z] = [z, a];
       z = Math.max(z, a + 4);
-      g.fillStyle = "rgba(124,196,255,.13)"; g.fillRect(0, a, w, z - a);
-      g.strokeStyle = "#7cc4ff"; g.lineWidth = 1.5; g.strokeRect(.75, a + .75, w - 1.5, z - a - 1.5);
+      g.fillStyle = "rgba(31,111,209,.10)"; g.fillRect(0, a, w, z - a);
+      g.strokeStyle = "#1f6fd1"; g.lineWidth = 1.5; g.strokeRect(.75, a + .75, w - 1.5, z - a - 1.5);
     }
     // the line you're on
     const cur = list.querySelector(".row.current");
-    if (cur) { const y = ypos(lineOf(cur).t, t0, t1, h); g.fillStyle = "#e6e8ec"; g.fillRect(0, y - 1, w, 2); }
+    if (cur) { const y = ypos(lineOf(cur).t, t0, t1, h); g.fillStyle = "#16191f"; g.fillRect(0, y - 1, w, 2); }
     strip.bins = { talk, bot, flag, done, bh, t0, t1, h };
   }
 

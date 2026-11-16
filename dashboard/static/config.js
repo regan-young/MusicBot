@@ -4,7 +4,7 @@ App.register("config", (() => {
   let page, data;
 
   async function mount(view) {
-    page = el("div", "page");
+    page = el("div", "page config");
     view.append(page);
     await load();
   }
@@ -12,17 +12,18 @@ App.register("config", (() => {
   async function load() {
     data = await api("/api/config");
     const groups = [...new Set(data.keys.map(k => k.group))];
-    page.replaceChildren(banner(), el("p", "muted", "Changes are saved to config.txt straight away, with a backup of the file before each one. The bot reads its config when it starts, so restart it to apply them. Keys, tokens and addresses aren't shown or changed here."));
-    for (const g of groups) page.append(el("section", "block", el("h2", null, g), el("div", "card", data.keys.filter(k => k.group === g).map(setting))));
+    page.replaceChildren(banner());
+    for (const g of groups) page.append(el("section", "block", card(g, data.keys.filter(k => k.group === g).map(setting))));
   }
 
   function banner() {
     const box = el("div", "banner" + (data.pending ? "" : " ok"));
-    if (!data.pending) { box.append(el("span", "status good", "The bot is running with the saved config")); return box; }
+    const about = el("p", "note", "Saved to config.txt straight away (backed up first); the bot reads it when it starts. Keys, tokens and addresses aren't shown here.");
+    if (!data.pending) { box.append(el("span", "status good", "The bot is running with the saved config"), about); return box; }
     const go = el("button", { type: "button", class: "primary" }, "Restart the bot");
     const msg = el("span", null, el("span", "status warning", "Saved changes are waiting for a restart"));
     go.addEventListener("click", () => restart(go, msg, false));
-    box.append(msg, go);
+    box.append(msg, go, about);
     return box;
   }
 
@@ -51,7 +52,7 @@ App.register("config", (() => {
   }
 
   function setting(k) {
-    const what = el("div", "what", el("b", null, k.label), el("p", null, k.help), el("code", null, k.key));
+    const what = el("div", "what", el("b", null, k.label), el("code", null, k.key), el("p", null, k.help));
     const how = el("div", "how");
     let input, read;
     if (k.kind === "text") {
@@ -84,7 +85,8 @@ App.register("config", (() => {
         App.status();
       } catch (e) { toast(e.message); changed(); }
     });
-    const row = el("div", "row1", save);
+    const wide = k.kind === "text" || k.kind === "tags";
+    const row = el("div", "row1", wide ? null : input, save);
     if (k.default != null && !same(k.value, k.default) && k.kind !== "text") {
       const reset = el("button", { type: "button" }, "Use the default");
       reset.addEventListener("click", () => {
@@ -101,7 +103,9 @@ App.register("config", (() => {
     }
     const def = k.default == null ? "" : k.kind === "text" ? (k.set ? "" : "Using the default persona.")
       : "Default: " + (Array.isArray(k.default) ? (k.default.join(", ") || "none") : (k.default === "" ? "empty" : k.default));
-    how.append(input, row, def ? el("div", "def", def) : null);
+    if (def) row.append(el("span", "def" + (k.kind !== "text" && !same(k.value, k.default) ? " changed" : ""), def));
+    if (wide) how.append(input);
+    how.append(row);
     return el("div", "setting", what, how);
   }
 
