@@ -478,16 +478,19 @@ public class VoiceManager
         rememberSession(guild, s);
     }
 
-    /** Greets someone joining the voice channel the bot is in: with their own greeting, or a long over-the-top welcome speech. */
     /**
-     * Welcomes someone joining the voice channel: their own greeting if they've
-     * set one; otherwise a fresh over-the-top speech the chat model writes for
-     * this moment (in a style not used lately, and unlike the last few), or a
-     * stock speech not said lately if the model fails or takes too long.
+     * Welcomes someone joining the voice channel: their own greeting, word for
+     * word, if they set exact words; otherwise a fresh welcome the chat model
+     * writes for this moment, from what they asked for if they made a request
+     * ("a new fun fact each time"), or else an over-the-top speech in a style
+     * not used lately. Unlike the last few either way. A stock speech not said
+     * lately if the model fails or takes too long.
      */
     public void greet(Guild guild, long userId, String displayName)
     {
-        String custom = greetings.get(userId);
+        // a request is written from, never said as it is
+        String request = greetings.isRequest(userId) ? greetings.get(userId) : "";
+        String custom = request.isEmpty() ? greetings.get(userId) : "";
         Deque<String> said = welcomesSaid.computeIfAbsent(guild.getIdLong(), k -> new ArrayDeque<>());
         java.util.function.Supplier<String> stock = () ->
         {
@@ -507,9 +510,13 @@ public class VoiceManager
         synchronized (said)
         {
             recent = List.copyOf(said);
-            style = pickWelcomeStyle(guild.getIdLong());
+            style = request.isEmpty() ? pickWelcomeStyle(guild.getIdLong()) : "their request";
         }
-        llm.complete(persona + WELCOME_TASK, welcomeContext(guild, userId, name.isEmpty() ? "my friend" : name, style, recent), 400)
+        String who = name.isEmpty() ? "my friend" : name;
+        String task = request.isEmpty() ? WELCOME_TASK : REQUESTED_WELCOME_TASK;
+        String context = request.isEmpty() ? welcomeContext(guild, userId, who, style, recent)
+                : requestedWelcomeContext(who, request, greetings.recent(userId));
+        llm.complete(persona + task, context, 400)
                 .thenApply(SpokenText::parseWelcome)
                 .completeOnTimeout(null, WELCOME_WAIT_MS, TimeUnit.MILLISECONDS)
                 .exceptionally(e ->
@@ -524,6 +531,8 @@ public class VoiceManager
                         LOG.info("Welcome for {}: stock speech", name);
                     else
                         LOG.info("Welcome for {} ({}): {}", name, style, written);
+                    if (written != null && !request.isEmpty())
+                        greetings.said(userId, written);
                     synchronized (said)
                     {
                         said.addLast(text);
@@ -574,6 +583,26 @@ public class VoiceManager
             + "welcomes you're shown. If you're given a detail, weave it in briefly and mention nothing else about the moment; "
             + "never anything sensitive or unkind. You may use one or two of the voice "
             + "tags you're allowed. Plain words only: no emoji, lists or links. Reply with only a JSON object: {\"welcome\": \"...\"}.";
+
+    static final String REQUESTED_WELCOME_TASK = "\n\nSomeone has just joined the voice channel, and they've told you how "
+            + "they want to be welcomed. Write the welcome you'll say out loud, doing what they asked: their request decides the "
+            + "tone and content, so a roast or something rude is fine if that's what they want, as teasing between friends "
+            + "(nothing hateful, and nothing about sensitive things). Usually 15 to 60 words. Use their name. Make it new every "
+            + "time: never repeat a line, joke, fact or opening from their recent welcomes. You may use one or two of the voice "
+            + "tags you're allowed. Plain words only: no emoji, lists or links. Reply with only a JSON object: {\"welcome\": \"...\"}.";
+
+    /** What a welcome is written from when they asked for a kind of welcome: who, their request, and their last few. */
+    private String requestedWelcomeContext(String name, String request, List<String> recent)
+    {
+        StringBuilder sb = new StringBuilder("Joining: ").append(name).append(".\nHow they want to be welcomed: ")
+                .append(request).append(voiceTagsContext).append('\n').append(timeContext());
+        if (!recent.isEmpty())
+        {
+            sb.append("\nTheir recent welcomes (say something different):");
+            recent.forEach(r -> sb.append("\n- ").append(r));
+        }
+        return sb.toString();
+    }
 
     /**
      * What the welcome is written from: who, the style, at most one detail of
@@ -1030,8 +1059,11 @@ public class VoiceManager
                 LOG.info("Greeting for {}: {}", member.getEffectiveName(), kept.isEmpty() ? "the usual" : kept);
                 if (!reply.isEmpty())
                     return reply;
-                return kept.isEmpty() ? "Done, you'll get the usual hello." : "Done. Next time you join, I'll say: "
-                        + SpokenText.greeting(member.getEffectiveName(), kept);
+                if (kept.isEmpty())
+                    return "Done, you'll get the usual hello.";
+                if (greetings.isRequest(member.getIdLong()))
+                    return "Done. I'll write you a fresh one every time you join.";
+                return "Done. Next time you join, I'll say: " + SpokenText.greeting(member.getEffectiveName(), kept);
             }
             case FORGET:
                 memory.forget(member.getIdLong());

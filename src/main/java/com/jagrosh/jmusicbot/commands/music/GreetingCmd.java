@@ -32,7 +32,7 @@ public class GreetingCmd extends Command
         this.bot = bot;
         this.name = "greeting";
         this.arguments = "[text|off]";
-        this.help = "sets what I say when you join the voice channel; {name} is your name";
+        this.help = "sets what I say when you join the voice channel; {name} is your name, and `style: <what you want>` gets a fresh one each time";
         this.aliases = bot.getConfig().getAliases(this.name);
         this.guildOnly = true;
         this.category = new Category("Music");
@@ -47,7 +47,7 @@ public class GreetingCmd extends Command
         String prefix = event.getClient().getPrefix();
         if (arg.isEmpty())
         {
-            String mine = greetings.get(id);
+            String mine = greetings.describe(id);
             event.reply(mine.isEmpty() ? "You get a long, over-the-top welcome speech. Set your own with `"
                     + prefix + name + " <text>`; `{name}` becomes your name." : "Your greeting: " + mine);
             return;
@@ -59,6 +59,11 @@ public class GreetingCmd extends Command
             return;
         }
         String kept = greetings.set(id, event.getMember().getEffectiveName(), arg);
+        if (greetings.isRequest(id))
+        {
+            event.replySuccess("Each time you join voice I'll write you a fresh welcome: " + kept.substring(Greetings.REQUEST.length()).trim());
+            return;
+        }
         event.replySuccess("Next time you join voice I'll say: " + kept
                 + (arg.length() > Greetings.MAX_LENGTH ? " (cut to " + Greetings.MAX_LENGTH + " characters)" : ""));
     }

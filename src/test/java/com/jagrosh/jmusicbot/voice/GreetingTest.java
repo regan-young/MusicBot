@@ -54,6 +54,39 @@ public class GreetingTest
     }
 
     @Test
+    public void requestsAreWrittenFreshAndRememberTheLastFew() throws Exception
+    {
+        java.nio.file.Path file = java.nio.file.Files.createTempFile("greetings", ".json");
+        java.nio.file.Files.delete(file);
+        Greetings g = new Greetings(file);
+        assertEquals("style: a different fun fact every time", g.set(1, "Whisk", "Style:  a different fun fact every time"));
+        assertTrue(g.isRequest(1));
+        assertEquals("a different fun fact every time", g.get(1));
+        for (int i = 0; i < 7; i++)
+            g.said(1, "welcome " + i);
+        Greetings reloaded = new Greetings(file);
+        assertTrue(reloaded.isRequest(1));
+        assertEquals("style: a different fun fact every time", reloaded.describe(1));
+        assertEquals(java.util.List.of("welcome 2", "welcome 3", "welcome 4", "welcome 5", "welcome 6"), reloaded.recent(1));
+        // exact words again: no longer a request, and the old welcomes go
+        g.set(1, "Whisk", "Hi {name}");
+        assertFalse(g.isRequest(1));
+        assertEquals(java.util.List.of(), g.recent(1));
+        java.nio.file.Files.deleteIfExists(file);
+    }
+
+    @Test
+    public void longGreetingsAreCutAtASentenceOrWord()
+    {
+        String sentence = "a".repeat(200) + ". " + "b ".repeat(100);
+        assertEquals("a".repeat(200) + ".", Greetings.shorten(sentence));
+        String words = "word ".repeat(80);
+        String cut = Greetings.shorten(words);
+        assertTrue(cut.length() <= Greetings.MAX_LENGTH);
+        assertTrue(cut.endsWith("word"));
+    }
+
+    @Test
     public void welcomeSpeechesAreLongAndVary()
     {
         java.util.Set<String> seen = new java.util.HashSet<>();
