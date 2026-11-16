@@ -54,6 +54,14 @@ public final class Variety
         return a.isEmpty() ? song : a + " " + song;
     }
 
+    /** The song part of a title: after "Artist - ", without (Official Video) and the like. */
+    public static String song(String title)
+    {
+        String t = title == null ? "" : title;
+        int dash = t.indexOf(" - ");
+        return clean(dash > 0 ? t.substring(dash + 3) : t);
+    }
+
     /** Who a track is by: the part before " - " in the title, or else the channel without VEVO or "- Topic". */
     public static String artist(String title, String author)
     {

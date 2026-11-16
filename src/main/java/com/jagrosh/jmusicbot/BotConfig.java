@@ -43,7 +43,7 @@ public class BotConfig
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
             evalEngine, ytdlpPath, voiceApi, voiceSttModel, voiceTtsModel, voiceTtsVoice,
             llmApi, llmKey, llmModel, llmPrompt, routerApi, routerKey, routerModel, routerDecisionModel, voiceRecordings, database, smartTurnModel, researchModel, timezone,
-            nsfwLlmApi, nsfwLlmKey, nsfwLlmModel, nsfwLlmPrompt, crudeLlmPrompt, coderApi, coderKey, riceApi;
+            nsfwLlmApi, nsfwLlmKey, nsfwLlmModel, nsfwLlmPrompt, crudeLlmPrompt, coderApi, coderKey, riceApi, lastFmKey;
     private java.util.List<String> postChannels;
     private int llmMaxTokens, musicGain, databaseSpeechDays;
     private boolean stayInChannel, songInGame, useEval, dbots;
@@ -122,6 +122,7 @@ public class BotConfig
             coderApi = config.getString("coderapi");
             coderKey = config.getString("coderkey");
             riceApi = config.getString("riceapi");
+            lastFmKey = config.getString("lastfmkey");
             postChannels = config.getStringList("postchannels");
             llmMaxTokens = config.getInt("llmmaxtokens");
             musicGain = Math.max(0, Math.min(100, config.getInt("musicgain")));
@@ -370,6 +371,12 @@ public class BotConfig
     public int getMaxYTPlaylistPages()
     {
         return maxYTPlaylistPages;
+    }
+
+    /** Last.fm API key for mixes; empty = YouTube's radio only. */
+    public String getLastFmKey()
+    {
+        return lastFmKey;
     }
 
     public int getMixSongs()
