@@ -204,7 +204,8 @@ public class MixCmd extends MusicCommand {
 
     /**
      * The seed as Last.fm knows it: "Artist - Title" uploads split at the
-     * dash; a bare title is looked up. Null if it can't be told.
+     * dash; a bare title goes with the channel as its artist. Null if it
+     * can't be told.
      */
     private LastFm.Song seedSong(String title, String author) {
         if (!lastFm.isEnabled() || title == null || title.isBlank())
@@ -216,8 +217,11 @@ public class MixCmd extends MusicCommand {
             if (!artist.isEmpty() && !song.isEmpty())
                 return new LastFm.Song(artist, song);
         }
-        String song = Variety.song(title);
-        return song.isEmpty() ? null : lastFm.findTrack(song);
+        // a bare title: the channel is usually the artist ("Royal Blood - Topic", "RoyalBloodVEVO"). A title
+        // search guesses wrong too often (Albert Ayler's "Summertime" came back as The Sundays); if the
+        // channel isn't an artist Last.fm knows, it returns nothing and the mix is YouTube's alone
+        String song = Variety.song(title), artist = Variety.artist("", author);
+        return song.isEmpty() || artist.isEmpty() ? null : new LastFm.Song(artist, song);
     }
 
     private class MixHandler implements AudioLoadResultHandler {
@@ -263,7 +267,8 @@ public class MixCmd extends MusicCommand {
             String seedArtist = Variety.artist(title, author);
             final int longOnes = skippedLong;
             // Last.fm is a few web calls: off the player's threads
-            CompletableFuture.supplyAsync(() -> MixPlanner.lastFmCandidates(lastFm, seedSong(title, author), new Random()))
+            CompletableFuture.supplyAsync(() -> MixPlanner.lastFmCandidates(lastFm, seedSong(title, author),
+                    title != null && title.contains(" - "), new Random()))
                     .exceptionally(e -> {
                         LOG.warn("Last.fm part of the mix failed", e);
                         return List.of();

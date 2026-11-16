@@ -79,9 +79,21 @@ public final class MixPlanner
      */
     public static List<LastFm.Song> lastFmCandidates(LastFm fm, LastFm.Song seed, Random random)
     {
+        return lastFmCandidates(fm, seed, true, random);
+    }
+
+    /**
+     * @param sure false when the seed's artist is only a guess (the channel of
+     *             a bare title): then Last.fm must know the song itself, or
+     *             nothing is used, so a wrong artist can't steer the mix
+     */
+    public static List<LastFm.Song> lastFmCandidates(LastFm fm, LastFm.Song seed, boolean sure, Random random)
+    {
         if (fm == null || !fm.isEnabled() || seed == null)
             return List.of();
         CompletableFuture<List<LastFm.Song>> similar = CompletableFuture.supplyAsync(() -> fm.similarTracks(seed.artist(), seed.title(), 60));
+        if (!sure && get(similar).isEmpty())
+            return List.of();
         List<String> artists = new ArrayList<>(deeper(fm.similarArtists(seed.artist(), 40)));
         Collections.shuffle(artists, random);
         List<CompletableFuture<List<LastFm.Song>>> tops = new ArrayList<>();

@@ -92,22 +92,6 @@ public class LastFm
         return songs(call("artist.gettoptracks", Map.of("artist", artist, "limit", Integer.toString(limit))), "toptracks");
     }
 
-    /** The best match for a bare song title (a YouTube upload without "Artist - "), or null. */
-    public Song findTrack(String title)
-    {
-        JSONObject o = call("track.search", Map.of("track", title, "limit", "1"));
-        if (o == null)
-            return null;
-        JSONObject results = o.optJSONObject("results");
-        JSONObject matches = results == null ? null : results.optJSONObject("trackmatches");
-        JSONArray arr = matches == null ? null : matches.optJSONArray("track");
-        if (arr == null || arr.isEmpty())
-            return null;
-        JSONObject t = arr.getJSONObject(0);
-        String artist = t.optString("artist", ""), name = t.optString("name", "");
-        return artist.isBlank() || name.isBlank() ? null : new Song(artist, name);
-    }
-
     /** The songs in a similartracks / toptracks answer. */
     static List<Song> songs(JSONObject o, String field)
     {
