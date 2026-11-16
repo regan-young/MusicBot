@@ -13,6 +13,8 @@ const App = {
     addEventListener("hashchange", () => this.route());
     this.route();
     this.status();
+    this.clock();
+    setInterval(() => this.clock(), 15000);
     // the top bar keeps up by itself; on Overview the tab paints it from its own answer
     setInterval(() => { if (!document.hidden && this.current?.name !== "overview") this.status(); }, 5000);
     // back on the page after a while: catch up now rather than at the next tick
@@ -50,6 +52,13 @@ const App = {
     this.current = { name: tab, tab: this.tabs[tab] };
     document.title = "Gunnabot · " + tab[0].toUpperCase() + tab.slice(1);
     Promise.resolve(this.tabs[tab].mount(view, rest.join("/"))).catch(e => view.append(el("p", "page empty", "Could not load: " + e.message)));
+  },
+
+  // the panel clock, like a desktop's
+  clock() {
+    const d = new Date();
+    $("clock").textContent = d.toLocaleDateString("en-NZ", { weekday: "short", day: "numeric", month: "short" }) + "  " +
+      d.toLocaleTimeString("en-NZ", { hour: "2-digit", minute: "2-digit", hour12: false });
   },
 
   // the dot in the top bar: is the bot up, and is anyone talking to it

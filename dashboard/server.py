@@ -71,8 +71,8 @@ HOSTS = {h.strip().lower() for h in os.environ.get("HOSTS", "").split(",") if h.
     | {BIND, "localhost", "127.0.0.1", socket.gethostname().lower()}
 
 STATIC = Path(__file__).with_name("static")
-STATIC_FILE = re.compile(r"[a-z0-9_-]+\.(js|css|svg)")
-TYPES = {"js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8", "svg": "image/svg+xml"}
+STATIC_FILE = re.compile(r"[a-z0-9_-]+\.(js|css|svg|woff2)")
+TYPES = {"js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8", "svg": "image/svg+xml", "woff2": "font/woff2"}
 
 
 # The page asks again every few seconds, from every open tab; answers this fresh are shared
