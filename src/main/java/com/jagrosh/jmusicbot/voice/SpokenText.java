@@ -74,7 +74,7 @@ final class SpokenText
     }
 
     /** A display name with nothing the voice would read out, cut short; empty if nothing is left. */
-    private static String cleanName(String displayName)
+    static String cleanName(String displayName)
     {
         String name = LlmClient.forSpeech(displayName == null ? "" : displayName)
                 .replaceAll("\\[[^\\]]*\\]", "")
@@ -116,10 +116,63 @@ final class SpokenText
      */
     static String welcome(String displayName, String custom, Random random)
     {
+        return welcome(displayName, custom, random, List.of());
+    }
+
+    /**
+     * The same, but a stock speech said recently (one of {@code recent}) is
+     * only picked again once every other one has been.
+     */
+    static String welcome(String displayName, String custom, Random random, java.util.Collection<String> recent)
+    {
         if (custom != null && !custom.isBlank())
             return greeting(displayName, custom);
         String name = cleanName(displayName);
-        return WELCOMES[random.nextInt(WELCOMES.length)].replace("{name}", name.isEmpty() ? "my friend" : name);
+        String who = name.isEmpty() ? "my friend" : name;
+        List<String> fresh = new ArrayList<>();
+        for (String w : WELCOMES)
+            if (recent.stream().noneMatch(r -> sameSpeech(r, w)))
+                fresh.add(w);
+        List<String> from = fresh.isEmpty() ? List.of(WELCOMES) : fresh;
+        return from.get(random.nextInt(from.size())).replace("{name}", who);
+    }
+
+    /** Whether a welcome that was said is this stock speech, whoever it was for. */
+    private static boolean sameSpeech(String said, String template)
+    {
+        String start = template.substring(0, template.indexOf("{name}") > 0 ? Math.min(40, template.indexOf("{name}")) : 40);
+        return said.startsWith(start);
+    }
+
+    // a written welcome longer than this is cut at a sentence; the stock ones are about 300 characters
+    static final int WELCOME_MAX = 600;
+
+    /**
+     * The {"welcome": "..."} the chat model wrote, made safe to speak: no
+     * links, no markdown, and cut at a sentence if it ran long. Null when there
+     * is nothing usable, so the caller falls back to a stock speech.
+     */
+    static String parseWelcome(String content)
+    {
+        if (content == null)
+            return null;
+        int start = content.indexOf('{'), end = content.lastIndexOf('}');
+        String text;
+        try
+        {
+            text = start >= 0 && end > start ? new org.json.JSONObject(content.substring(start, end + 1)).optString("welcome", "") : "";
+        }
+        catch (org.json.JSONException e)
+        {
+            return null;
+        }
+        text = text.replaceAll("https?://\\S+", "").replaceAll("[*_`#~>]", "").replaceAll("\\s+", " ").trim();
+        if (text.length() > WELCOME_MAX)
+        {
+            int cut = Math.max(text.lastIndexOf(". ", WELCOME_MAX), Math.max(text.lastIndexOf("! ", WELCOME_MAX), text.lastIndexOf("? ", WELCOME_MAX)));
+            text = cut > 80 ? text.substring(0, cut + 1) : text.substring(0, WELCOME_MAX).trim();
+        }
+        return text.length() < 20 ? null : text;
     }
 
     /**

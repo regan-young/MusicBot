@@ -478,9 +478,138 @@ public class VoiceManager
     }
 
     /** Greets someone joining the voice channel the bot is in: with their own greeting, or a long over-the-top welcome speech. */
+    /**
+     * Welcomes someone joining the voice channel: their own greeting if they've
+     * set one; otherwise a fresh over-the-top speech the chat model writes for
+     * this moment (in a style not used lately, and unlike the last few), or a
+     * stock speech not said lately if the model fails or takes too long.
+     */
     public void greet(Guild guild, long userId, String displayName)
     {
-        speak(guild, SpokenText.welcome(displayName, greetings.get(userId), java.util.concurrent.ThreadLocalRandom.current()));
+        String custom = greetings.get(userId);
+        Deque<String> said = welcomesSaid.computeIfAbsent(guild.getIdLong(), k -> new ArrayDeque<>());
+        java.util.function.Supplier<String> stock = () ->
+        {
+            synchronized (said)
+            {
+                return SpokenText.welcome(displayName, custom, java.util.concurrent.ThreadLocalRandom.current(), List.copyOf(said));
+            }
+        };
+        if ((custom != null && !custom.isBlank()) || llm == null)
+        {
+            speak(guild, stock.get());
+            return;
+        }
+        String name = SpokenText.cleanName(displayName);
+        String style;
+        List<String> recent;
+        synchronized (said)
+        {
+            recent = List.copyOf(said);
+            style = pickWelcomeStyle(guild.getIdLong());
+        }
+        llm.complete(persona + WELCOME_TASK, welcomeContext(guild, userId, name.isEmpty() ? "my friend" : name, style, recent), 400)
+                .thenApply(SpokenText::parseWelcome)
+                .completeOnTimeout(null, WELCOME_WAIT_MS, TimeUnit.MILLISECONDS)
+                .exceptionally(e ->
+                {
+                    LOG.warn("Could not write a welcome for {}; using a stock one", name, e);
+                    return null;
+                })
+                .thenAccept(written ->
+                {
+                    String text = written != null ? written : stock.get();
+                    if (written == null)
+                        LOG.info("Welcome for {}: stock speech", name);
+                    else
+                        LOG.info("Welcome for {} ({}): {}", name, style, written);
+                    synchronized (said)
+                    {
+                        said.addLast(text);
+                        while (said.size() > WELCOMES_REMEMBERED)
+                            said.removeFirst();
+                    }
+                    speak(guild, text);
+                });
+    }
+
+    // the last welcomes said in each server, so a new one doesn't echo them
+    private final Map<Long, Deque<String>> welcomesSaid = new ConcurrentHashMap<>();
+    // the styles used lately in each server, so the next one is different
+    private final Map<Long, Deque<String>> welcomeStyles = new ConcurrentHashMap<>();
+    private static final int WELCOMES_REMEMBERED = 6;
+    // how long a written welcome may take before a stock one is said instead
+    private static final long WELCOME_WAIT_MS = 6000;
+
+    // one is picked per welcome, never one of the last few, so they don't all sound alike
+    static final String[] WELCOME_STYLES = {
+        "a boxing ring announcer introducing a champion", "a royal herald at a medieval court", "a breathless sports commentator calling a "
+            + "game-winning play", "a nature documentary narrator spotting a rare creature", "a game show host bringing out a contestant",
+        "a movie trailer voice-over", "an airline captain making an announcement", "a weather presenter forecasting their arrival",
+        "a breaking news anchor", "a Dota caster calling a rampage", "a museum guide unveiling a priceless exhibit",
+        "a wrestling announcer with entrance music", "a ship's captain sighting land", "a cooking show host presenting the dish of the day",
+        "a hype MC at a festival", "a mission control launch countdown", "a fairy-tale storyteller", "a stadium PA announcer",
+        "an auctioneer who can't believe their luck", "an awards show presenter opening the envelope",
+    };
+
+    /** A style not used in this server's last several welcomes. Call with the server's said-list held. */
+    private String pickWelcomeStyle(long guildId)
+    {
+        Deque<String> used = welcomeStyles.computeIfAbsent(guildId, k -> new ArrayDeque<>());
+        List<String> fresh = new ArrayList<>();
+        for (String s : WELCOME_STYLES)
+            if (!used.contains(s))
+                fresh.add(s);
+        String style = fresh.get(java.util.concurrent.ThreadLocalRandom.current().nextInt(fresh.size()));
+        used.addLast(style);
+        while (used.size() > WELCOME_STYLES.length / 2)
+            used.removeFirst();
+        return style;
+    }
+
+    static final String WELCOME_TASK = "\n\nSomeone has just joined the voice channel. Write the welcome you'll say out loud: a "
+            + "big, warm, over-the-top entrance for them, about 40 to 70 words in three or four short sentences, performed in the "
+            + "style you're given. Use their name once or twice. Make it fresh: no lines, jokes or openings from the recent "
+            + "welcomes you're shown. If you're given a detail, weave it in briefly and mention nothing else about the moment; "
+            + "never anything sensitive or unkind. You may use one or two of the voice "
+            + "tags you're allowed. Plain words only: no emoji, lists or links. Reply with only a JSON object: {\"welcome\": \"...\"}.";
+
+    /**
+     * What the welcome is written from: who, the style, at most one detail of
+     * the moment (or none), and the welcomes said lately. Handing over one
+     * detail, picked here, keeps every welcome from listing the song and who's
+     * in the channel.
+     */
+    private String welcomeContext(Guild guild, long userId, String name, String style, List<String> recent)
+    {
+        StringBuilder sb = new StringBuilder("Joining: ").append(name).append(".\nStyle: ").append(style).append('.')
+                .append(voiceTagsContext);
+        List<String> details = new ArrayList<>();
+        String known = memory.describe(List.of(userId));
+        if (!known.isEmpty())
+            details.add("Something you remember about them: " + known);
+        details.add(timeContext());
+        AudioTrack playing = bot.getPlayerManager().setUpHandler(guild).getPlayer().getPlayingTrack();
+        if (playing != null)
+            details.add("Playing: " + playerState(bot.getPlayerManager().setUpHandler(guild)));
+        List<String> here = new ArrayList<>();
+        for (long id : peopleInVoice(guild))
+        {
+            var m = guild.getMemberById(id);
+            if (id != userId && m != null)
+                here.add(SpokenText.cleanName(m.getEffectiveName()));
+        }
+        if (!here.isEmpty())
+            details.add("Already in the channel: " + String.join(", ", here) + ".");
+        // as often as not, no detail at all: just the entrance
+        int pick = java.util.concurrent.ThreadLocalRandom.current().nextInt(details.size() * 2);
+        sb.append(pick < details.size() ? "\nOne detail to weave in briefly: " + details.get(pick) : "\nNo detail this time: just the entrance.");
+        if (!recent.isEmpty())
+        {
+            sb.append("\nRecent welcomes (don't reuse their lines or openings):");
+            recent.forEach(r -> sb.append("\n- ").append(r));
+        }
+        return sb.toString();
     }
 
     public Greetings getGreetings()

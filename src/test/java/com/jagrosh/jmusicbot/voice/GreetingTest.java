@@ -2,6 +2,7 @@ package com.jagrosh.jmusicbot.voice;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -66,6 +67,32 @@ public class GreetingTest
         }
         assertTrue(seen.size() > 1);
         assertTrue(SpokenText.welcome("😎", null, new java.util.Random(1)).contains("my friend"));
+    }
+
+    @Test
+    public void stockSpeechesSaidLatelyWaitTheirTurn()
+    {
+        // five welcomes, each to someone different, never repeating a speech while unused ones remain
+        java.util.List<String> recent = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++)
+        {
+            String w = SpokenText.welcome("Person" + i, "", new java.util.Random(i * 31L), recent);
+            assertFalse(recent.stream().anyMatch(r -> r.substring(0, 30).equals(w.substring(0, 30))));
+            recent.add(w);
+        }
+    }
+
+    @Test
+    public void writtenWelcomesAreMadeSafeToSpeak()
+    {
+        assertEquals("Ladies and gentlemen, Sam is here! Welcome!",
+                SpokenText.parseWelcome("{\"welcome\": \"**Ladies and gentlemen**, Sam is here! https://x.y Welcome!\"}"));
+        assertNull(SpokenText.parseWelcome("not json"));
+        assertNull(SpokenText.parseWelcome("{\"welcome\": \"\"}"));
+        assertNull(SpokenText.parseWelcome(null));
+        String longOne = "This is a sentence about Sam. ".repeat(40);
+        String cut = SpokenText.parseWelcome("{\"welcome\": \"" + longOne + "\"}");
+        assertTrue(cut.length() <= SpokenText.WELCOME_MAX && cut.endsWith("."));
     }
 
     @Test
