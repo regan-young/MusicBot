@@ -18,6 +18,7 @@ import com.jagrosh.jdautilities.command.CommandClient;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.BotConfig;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
+import com.jagrosh.jmusicbot.audio.SavedQueue;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.commands.DJCommand;
 import com.jagrosh.jmusicbot.data.BotDatabase;
@@ -1422,6 +1423,10 @@ public class VoiceManager
             {
                 bot.getPlayerManager().setUpHandler(guild);
                 guild.getAudioManager().openAudioConnection(voice);
+                // saved within the last two minutes = music was playing when the deploy began
+                SavedQueue.Snapshot saved = SavedQueue.load(guild.getIdLong());
+                if (saved != null && System.currentTimeMillis() - saved.savedAt() < 120_000)
+                    bot.getPlayerManager().setUpHandler(guild).restoreQueue(guild);
                 if (r.listening() && text != null && isEnabled())
                     startListening(guild, text, voice);
                 // give the voice connection a moment to come up
@@ -2292,8 +2297,17 @@ public class VoiceManager
                 confirm.accept("Paused.");
                 return;
             case "resume":
-                handler.getPlayer().setPaused(false);
-                confirm.accept("Resuming.");
+                if (handler.getPlayer().getPlayingTrack() != null)
+                {
+                    handler.getPlayer().setPaused(false);
+                    confirm.accept("Resuming.");
+                    return;
+                }
+                // nothing loaded (after a ?stop, the bot leaving, a kick or a restart):
+                // bring back what was playing
+                SavedQueue.Snapshot saved = handler.restoreQueue(guild);
+                confirm.accept(saved == null ? "There's nothing to resume."
+                        : "Picking up where we left off: " + SavedQueue.describe(saved) + ".");
                 return;
             case "hush":
                 hush(guild);

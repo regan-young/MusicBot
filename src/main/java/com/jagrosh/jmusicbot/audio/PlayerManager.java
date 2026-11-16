@@ -98,6 +98,22 @@ public class PlayerManager extends DefaultAudioPlayerManager
         AudioSourceManagers.registerLocalSource(this);
 
         DuncteBotSources.registerAll(this, "en-US");
+
+        // keep the saved queue's position current, so "resume" after a kick
+        // or a restart starts the song about where it was
+        bot.getThreadpool().scheduleWithFixedDelay(() -> {
+            try
+            {
+                if (bot.getJDA() != null)
+                    for (Guild g : bot.getJDA().getGuilds())
+                        if (hasHandler(g))
+                            ((AudioHandler) g.getAudioManager().getSendingHandler()).saveQueue();
+            }
+            catch (Exception e)
+            {
+                org.slf4j.LoggerFactory.getLogger(PlayerManager.class).warn("Saving queues failed", e);
+            }
+        }, 15, 15, java.util.concurrent.TimeUnit.SECONDS);
     }
     
     public Bot getBot()

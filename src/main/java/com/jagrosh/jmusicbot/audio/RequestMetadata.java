@@ -40,6 +40,13 @@ public class RequestMetadata
         this.requestInfo = requestInfo;
     }
     
+    /** For a song brought back from the saved queue, where there's no User object. */
+    public RequestMetadata(long userId, String username, String avatar, RequestInfo requestInfo)
+    {
+        this.user = userId == 0 ? null : new UserInfo(userId, username == null ? "unknown" : username, "0000", avatar);
+        this.requestInfo = requestInfo;
+    }
+
     public long getOwner()
     {
         return user == null ? 0L : user.id;

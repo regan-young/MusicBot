@@ -21,9 +21,11 @@ import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
 import com.jagrosh.jmusicbot.voice.VoiceSpeaker;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
+import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.event.AudioEventAdapter;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
+import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
@@ -77,6 +79,9 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private boolean karaoke;
     private byte[] lastFrame;
     private AbstractQueue<QueuedTrack> queue;
+    // the saved queue (see SavedQueue): what was last written, and whether it must be left alone
+    private SavedQueue.Snapshot lastSaved;
+    private volatile boolean clearing, restoring;
 
     protected AudioHandler(PlayerManager manager, Guild guild, AudioPlayer player, AudioPlayer voicePlayer)
     {
@@ -142,12 +147,146 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         return queue;
     }
     
+    /**
+     * Stops the music and empties the queue. The saved queue is kept, so
+     * "resume" can bring it back after a ?stop or the bot leaving.
+     */
     public void stopAndClear()
     {
-        queue.clear();
-        defaultQueue.clear();
-        audioPlayer.stopTrack();
-        //current = null;
+        clearing = true;
+        try
+        {
+            queue.clear();
+            defaultQueue.clear();
+            audioPlayer.stopTrack();
+        }
+        finally
+        {
+            clearing = false;
+        }
+    }
+
+    /**
+     * Writes what's playing and queued to disk, if it changed. Called when a
+     * song starts and every few seconds while music plays. Radio stations
+     * aren't saved, and nothing is written while the queue is being emptied
+     * or brought back.
+     */
+    public synchronized void saveQueue()
+    {
+        if (clearing || restoring)
+            return;
+        AudioTrack playing = audioPlayer.getPlayingTrack();
+        if (playing == null || manager.getBot().getRadioMetadata().isRadio(playing))
+            return;
+        List<SavedQueue.Entry> upcoming = new ArrayList<>();
+        try
+        {
+            for (QueuedTrack qt : new ArrayList<>(queue.getList()))
+            {
+                if (upcoming.size() >= SavedQueue.MAX_UPCOMING)
+                    break;
+                if (!manager.getBot().getRadioMetadata().isRadio(qt.getTrack()))
+                    upcoming.add(entry(qt.getTrack()));
+            }
+        }
+        catch (java.util.ConcurrentModificationException e)
+        {
+            return; // changed under us; the next tick gets it
+        }
+        SavedQueue.Snapshot s = new SavedQueue.Snapshot(System.currentTimeMillis(), entry(playing), playing.getPosition(), upcoming);
+        if (s.sameAs(lastSaved))
+            return;
+        SavedQueue.save(guildId, s);
+        lastSaved = s;
+    }
+
+    private static SavedQueue.Entry entry(AudioTrack t)
+    {
+        RequestMetadata rm = t.getUserData(RequestMetadata.class);
+        RequestMetadata.UserInfo u = rm == null ? null : rm.user;
+        return new SavedQueue.Entry(t.getInfo().uri, t.getInfo().title, u == null ? 0 : u.id,
+                u == null ? null : u.username, u == null ? null : u.avatar);
+    }
+
+    /**
+     * Brings back the saved queue: the song that was playing, from where it
+     * got to, then the rest in order, loaded one at a time behind it.
+     *
+     * @return what is being brought back, or null if nothing was saved
+     */
+    public SavedQueue.Snapshot restoreQueue(Guild guild)
+    {
+        SavedQueue.Snapshot s = SavedQueue.load(guildId);
+        if (s == null)
+            return null;
+        LoggerFactory.getLogger("AudioHandler").info("Restoring the saved queue: {} ({} after it)", s.current().title(), s.upcoming().size());
+        List<SavedQueue.Entry> all = new ArrayList<>();
+        all.add(s.current());
+        all.addAll(s.upcoming());
+        restoring = true;
+        loadSaved(guild, all, 0, s.position());
+        return s;
+    }
+
+    private void loadSaved(Guild guild, List<SavedQueue.Entry> entries, int i, long position)
+    {
+        if (i >= entries.size())
+        {
+            restoring = false;
+            saveQueue();
+            return;
+        }
+        SavedQueue.Entry e = entries.get(i);
+        manager.loadItemOrdered(guild, e.uri(), new AudioLoadResultHandler()
+        {
+            private void add(AudioTrack track)
+            {
+                try
+                {
+                    QueuedTrack qt = new QueuedTrack(track, new RequestMetadata(e.requesterId(), e.requester(), e.avatar(),
+                            new RequestMetadata.RequestInfo(e.uri(), e.uri())));
+                    if (i == 0 && position > 0 && track.isSeekable() && position < track.getDuration())
+                        track.setPosition(position);
+                    addTrack(qt);
+                }
+                catch (RuntimeException ex)
+                {
+                    LoggerFactory.getLogger("AudioHandler").warn("Could not queue saved song {}", e.uri(), ex);
+                }
+            }
+
+            @Override
+            public void trackLoaded(AudioTrack track)
+            {
+                add(track);
+                loadSaved(guild, entries, i + 1, position);
+            }
+
+            @Override
+            public void playlistLoaded(AudioPlaylist playlist)
+            {
+                AudioTrack t = playlist.getSelectedTrack() != null ? playlist.getSelectedTrack()
+                        : playlist.getTracks().isEmpty() ? null : playlist.getTracks().get(0);
+                if (t != null)
+                    add(t);
+                loadSaved(guild, entries, i + 1, position);
+            }
+
+            @Override
+            public void noMatches()
+            {
+                LoggerFactory.getLogger("AudioHandler").warn("Saved song is gone: {}", e.uri());
+                loadSaved(guild, entries, i + 1, position);
+            }
+
+            @Override
+            public void loadFailed(FriendlyException ex)
+            {
+                LoggerFactory.getLogger("AudioHandler").warn("Could not load saved song {}: {}", e.uri(), ex.getMessage());
+                loadSaved(guild, entries, i + 1, position);
+            }
+        });
     }
     
     public boolean isMusicPlaying(JDA jda)
@@ -269,6 +408,12 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             if(!playFromDefault())
             {
                 manager.getBot().getNowplayingHandler().onTrackUpdate(manager.getBot().getJDA().getGuildById(guildId), null);
+                // the queue played out (or the last song was skipped): nothing is left to resume
+                if (!clearing && !restoring)
+                {
+                    SavedQueue.delete(guildId);
+                    synchronized (this) { lastSaved = null; }
+                }
                 // stay connected while ?chat is listening
                 if(!manager.getBot().getConfig().getStay() && !manager.getBot().getVoiceManager().isListening(guildId))
                     manager.getBot().closeAudioConnection(guildId);
@@ -294,6 +439,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         votes.clear();
         remember(track);
+        saveQueue();
         manager.getBot().getNowplayingHandler().onTrackUpdate(manager.getBot().getJDA().getGuildById(guildId), track);
     }
 

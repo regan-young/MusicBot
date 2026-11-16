@@ -73,6 +73,14 @@ public class PlayCmd extends MusicCommand {
                     event.replyError("Only DJs can unpause the player!");
                 return;
             }
+            if (handler.getPlayer().getPlayingTrack() == null && handler.getQueue().isEmpty()) {
+                com.jagrosh.jmusicbot.audio.SavedQueue.Snapshot saved = handler.restoreQueue(event.getGuild());
+                if (saved != null) {
+                    event.replySuccess("Picking up where we left off: **"
+                            + com.jagrosh.jmusicbot.audio.SavedQueue.describe(saved) + "**.");
+                    return;
+                }
+            }
             StringBuilder builder = new StringBuilder(event.getClient().getWarning() + " Play Commands:\n");
             builder.append("\n`").append(event.getClient().getPrefix()).append(name)
                     .append(" <song title>` - plays the first result from Youtube");

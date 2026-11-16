@@ -156,7 +156,7 @@ public class VoiceRouter
             + "\"go to number three\"). args: the song's name, or its number in the queue as digits. Moving within the "
             + "current song (\"thirty seconds in\") isn't this\n"
             + "- pause: pause the music for now\n"
-            + "- resume: continue paused music\n"
+            + "- resume: continue paused music, or bring back the songs that were playing before\n"
             + "- stop: stop the music and clear the queue (the bot stays in the channel)\n"
             + "- leave: the bot should leave the voice channel (\"bot, you can go\", \"gunnabot, disconnect\", "
             + "\"get out of here, clanker\"). Only when they tell the bot to leave; someone saying they're leaving "
@@ -449,7 +449,7 @@ public class VoiceRouter
         { "skipto", "Jump to a particular song already in the queue, by name or number ('skip to Dreams', 'go to number "
                 + "three')." },
         { "pause", "Pause the music for now. Someone saying they will pause or stop something themselves ('I'll pause it') is none." },
-        { "resume", "Continue paused music." },
+        { "resume", "Continue paused music, or bring back the songs that were playing before." },
         { "stop", "Stop the music and clear the queue. Only when they clearly ask for the music to stop." },
         { "leave", "Tell the bot to leave the voice channel ('bot, you can go', 'disconnect'). Someone saying they are "
                 + "leaving themselves is none." },
