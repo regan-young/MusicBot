@@ -14,6 +14,9 @@
   --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   --pixel: "Pixelify", var(--mono);
   --top: 40px;
+  /* spacing and type steps: use these, not new numbers */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --fs-xs: 12px; --fs-sm: 13px; --fs-md: 15px; --fs-lg: 18px; --fs-xl: 28px;
   /* raised and sunken edges, Windows style: light on the top left, dark on the bottom right */
   --raised: inset 1px 1px 0 var(--hi), inset -1px -1px 0 var(--lo), inset 2px 2px 0 var(--hi-2), inset -2px -2px 0 var(--lo-2);
   --sunken: inset 1px 1px 0 var(--lo), inset -1px -1px 0 var(--hi), inset 2px 2px 0 var(--lo-2), inset -2px -2px 0 var(--hi-2);
@@ -30,11 +33,12 @@ body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-i
 ::selection { background: #2f7ad8; color: #fff; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-h2 { font: 500 13px/1.2 var(--mono); color: var(--dim); text-transform: lowercase; letter-spacing: .02em; margin: 0 0 10px;
-     display: flex; align-items: baseline; gap: 8px; }
-/* section headings read like a shell path */
+/* section headings read like a shell path, with a hairline running off to the right */
+h2 { font: 500 var(--fs-sm)/1.2 var(--mono); color: var(--dim); text-transform: lowercase; letter-spacing: .02em; margin: 0;
+     display: flex; align-items: center; gap: var(--sp-2); flex: 1; min-width: 0; }
 h2::before { content: "~/"; color: var(--accent); }
-h2 small { font-family: system-ui, sans-serif; text-transform: none; }
+h2::after { content: ""; flex: 1; height: 1px; min-width: var(--sp-5); background: linear-gradient(90deg, #1a223324, transparent); }
+h2 small { font: var(--fs-xs) system-ui, sans-serif; text-transform: none; color: var(--faint); }
 select, input[type=search], input[type=text], input[type=number], textarea.field {
   background: var(--bg); color: var(--text); border: 0; border-radius: 0; box-shadow: var(--sunken); padding: 5px 9px; font: inherit; }
 input:focus-visible, select:focus-visible, textarea.field:focus { outline: 1px dotted var(--accent); outline-offset: -4px; }
@@ -53,7 +57,7 @@ button.danger { color: var(--bad); }
 kbd { background: var(--panel-2); border: 0; box-shadow: var(--raised); border-radius: 0; padding: 0 6px;
       font: 12px var(--mono); color: var(--text); }
 .muted { color: var(--dim); }
-.num { font-variant-numeric: tabular-nums; }
+a:focus-visible, nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* the toast is a little message box */
 #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--panel); color: var(--text); padding: 30px 16px 12px;
          box-shadow: var(--raised), 0 12px 30px #1a223333; display: none; font-weight: 600; z-index: 20; max-width: 92vw; }
@@ -81,7 +85,7 @@ nav a.on::before { color: #ffffffb0; }
 #topstatus .status { font-weight: 500; }
 #clock { color: var(--text); padding-left: 12px; border-left: 1px solid #1a22331f; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #view { flex: 1; min-height: 0; overflow-y: auto; }
-.page { padding: 20px 22px 60px; max-width: 1400px; }
+.page { padding: var(--sp-5) var(--sp-5) 64px; max-width: 1440px; margin: 0 auto; }
 
 /* ---- status: a coloured dot (shaped for the bad ones) beside ink-coloured words ---- */
 .status { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text); --dot: var(--faint); }
@@ -104,13 +108,36 @@ nav a.on::before { color: #ffffffb0; }
 /* the window you're over, or typing in, is the active one */
 .card:hover > h3:first-child, .card:focus-within > h3:first-child { background: var(--title); color: #fff; }
 .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--dim); font-weight: 600; }
-.card .big { font-size: 26px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
-.card .big small { font-size: 14px; color: var(--dim); font-weight: 500; letter-spacing: 0; }
-.card .sub { color: var(--dim); font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
-.card ul { margin: 6px 0 0; padding: 0; list-style: none; font-size: 13px; }
-.card li { padding: 3px 0; border-top: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card li:first-child { border-top: 0; }
-section.block { margin-bottom: 30px; }
+section.block { margin-bottom: var(--sp-6); }
+section.block > .head { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-3); min-height: 26px; }
+/* everything in a section sits the same distance apart */
+section.block > :not(.head) + :not(.head) { margin-top: var(--sp-4); }
+section.block > .grid { margin-bottom: 0; }
+section.block > .head .actions { display: flex; gap: var(--sp-2); align-items: center; flex: none; }
+
+/* ---- stats: headline numbers in one panel, split by hairlines that survive any wrap ---- */
+.stats-card { padding: 3px; }
+.stats-card > h3:first-child { margin: 0 0 3px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--line); }
+.stat { background: var(--panel); padding: var(--sp-3) var(--sp-4) var(--sp-4); min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.stat .label { font: var(--fs-xs)/1.3 var(--mono); color: var(--faint); text-transform: lowercase; margin-bottom: var(--sp-1); }
+.big { font-size: var(--fs-xl); font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -.015em; margin-bottom: var(--sp-1); }
+.big .u, .big small { font-size: .52em; color: var(--dim); font-weight: 500; letter-spacing: 0; }
+.big .status { gap: 10px; }
+.big .song { font-size: var(--fs-lg); line-height: 1.3; letter-spacing: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sub { color: var(--dim); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.sub a { font-weight: 500; }
+/* a sunken meter with an old-style block fill */
+.meter { display: block; height: 12px; margin: var(--sp-1) 0 var(--sp-1); background: var(--bg); box-shadow: var(--sunken); padding: 2px; }
+.meter i { display: block; height: 100%; min-width: 2px; background: repeating-linear-gradient(90deg, var(--accent) 0 7px, transparent 7px 9px); }
+
+/* ---- feedback: loading, empty, intro ---- */
+.loading { display: flex; align-items: center; gap: var(--sp-3); color: var(--dim); font: var(--fs-sm) var(--mono); padding: var(--sp-4) 0; }
+.loading .bar { width: 132px; height: 16px; background: var(--bg); box-shadow: var(--sunken); position: relative; overflow: hidden; }
+.loading .bar i { position: absolute; top: 3px; bottom: 3px; width: 10px; background: var(--accent); animation: blocks 1.3s linear infinite; }
+.loading .bar i:nth-child(2) { animation-delay: .1s; } .loading .bar i:nth-child(3) { animation-delay: .2s; }
+@keyframes blocks { from { left: -14px; } to { left: 140px; } }
+.intro { color: var(--dim); font-size: 14px; max-width: 80ch; margin: 0 0 var(--sp-5); }
 table.data { border-collapse: collapse; width: 100%; font-size: 14px; }
 table.data th { text-align: left; color: var(--dim); font-weight: 600; font-size: 12px; padding: 4px 10px; white-space: nowrap;
                 background: var(--panel-2); box-shadow: inset 1px 1px 0 var(--hi), inset -1px -1px 0 var(--lo-2); }
@@ -119,13 +146,24 @@ table.data tbody tr:hover td { background: #1f6fd10f; }
 table.data td.n, table.data th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 table.data td.title { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scrollx { overflow-x: auto; }
-.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+.filters { display: flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--sp-5); }
+/* a control strip: a raised bar that hugs its contents */
+.filters.toolbar { width: fit-content; max-width: 100%; background: #ffffffb3; box-shadow: var(--raised), var(--lift); padding: 6px var(--sp-2); }
+.filters.toolbar > .muted:first-child { padding: 0 var(--sp-1); }
 .filters > .muted { font: 13px var(--mono); text-transform: lowercase; }
 .seg { display: inline-flex; gap: 3px; }
 .seg button { padding: 4px 12px; }
 .seg button.on { box-shadow: var(--sunken); background: var(--bg); color: var(--accent); font-weight: 600; padding: 5px 11px 3px 13px; }
 .note { color: var(--dim); font-size: 13px; margin: 6px 0 0; }
-.empty { color: var(--dim); padding: 30px 0; text-align: center; }
+.empty { color: var(--dim); padding: var(--sp-5) var(--sp-4); text-align: center; background: #ffffff8c; border: 1px dashed #1a22332e; }
+.logs .empty { background: none; border-color: #ffffff26; }
+/* opening a tab: its windows pop open, once */
+.entering .card, .entering .logs, .entering .tx { animation: win-open .24s cubic-bezier(.2, .8, .3, 1) both; }
+.entering .grid > :nth-child(2), .entering .block:nth-child(2) .card { animation-delay: .03s; }
+.entering .grid > :nth-child(3), .entering .block:nth-child(3) .card { animation-delay: .06s; }
+.entering .grid > :nth-child(4), .entering .block:nth-child(4) .card { animation-delay: .09s; }
+@keyframes win-open { from { opacity: 0; transform: translateY(6px) scale(.985); } }
+@media (prefers-reduced-motion: reduce) { .entering * { animation: none !important; } .loading .bar i { animation-duration: 4s; } }
 
 /* ---- charts ---- */
 .chart { position: relative; }
@@ -204,6 +242,8 @@ table.data td.title { max-width: 0; width: 100%; overflow: hidden; text-overflow
           gap: 8px 12px; align-items: center; }
 .tx-bar #txSession { max-width: 420px; }
 .tx-bar input[type=search] { width: 170px; }
+/* a sunken divider between groups of controls */
+.sep { width: 2px; align-self: stretch; margin: 2px 2px; box-shadow: inset 1px 0 var(--lo-2), inset -1px 0 var(--hi); }
 #txCount { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; font-size: 13px; }
 .tx-progress { height: 6px; background: var(--bg); box-shadow: var(--sunken); flex: none; padding: 1px; }
 .tx-progress div { height: 100%; width: 0; transition: width .2s;
@@ -280,6 +320,8 @@ table.data td.title { max-width: 0; width: 100%; overflow: hidden; text-overflow
   select, input[type=search], input[type=text], input[type=number], textarea.field, .row textarea { font-size: 16px; }
   .tx { height: auto; display: block; }
   .tx-bar { padding: 8px 10px; gap: 8px; position: static; margin-right: 30px; }
+  .tx-bar .sep { display: none; }
+  .filters.toolbar { width: auto; }
   .tx-progress { margin-right: 30px; }
   .tx-bar #txSession { max-width: none; width: 100%; }
   #txSpeaker, #txShow { flex: 1 1 40%; min-width: 0; }
@@ -320,4 +362,6 @@ table.data td.title { max-width: 0; width: 100%; overflow: hidden; text-overflow
 .memory button { padding: 5px 10px; white-space: nowrap; }
 .block > .memories { background: var(--panel); box-shadow: var(--raised), var(--lift); padding: 14px 16px; }
 @media (max-width: 700px) { .memory button { min-height: 38px; } .memory input { min-height: 38px; } }
-.memory button:disabled { visibility: hidden; }
+.memory button:disabled { display: none; }
+.memory button.danger:not(:hover):not(:focus-visible) { color: var(--dim); }
+.tx-empty .loading { justify-content: center; }

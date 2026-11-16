@@ -48,10 +48,12 @@ const App = {
     const view = $("view");
     view.replaceChildren();
     view.scrollTop = 0;
+    view.classList.remove("entering"); void view.offsetWidth; view.classList.add("entering");
+    clearTimeout(this.entered); this.entered = setTimeout(() => view.classList.remove("entering"), 700);
     scrollTo(0, 0);
     this.current = { name: tab, tab: this.tabs[tab] };
     document.title = "Gunnabot · " + tab[0].toUpperCase() + tab.slice(1);
-    Promise.resolve(this.tabs[tab].mount(view, rest.join("/"))).catch(e => view.append(el("p", "page empty", "Could not load: " + e.message)));
+    Promise.resolve(this.tabs[tab].mount(view, rest.join("/"))).catch(e => view.replaceChildren(el("div", "page", el("p", "empty", "Could not load: " + e.message))));
   },
 
   // the panel clock, like a desktop's
@@ -147,7 +149,44 @@ function table(rows, cols) {
   return el("div", "scrollx", t);
 }
 
+// ---- the UI kit every tab builds from ----
+
+// a window: a title bar (title may be text or nodes) over its contents
 function card(title, ...body) { return el("div", "card", el("h3", null, title), ...body); }
+
+// a titled part of a page: a shell-path heading, optional controls on its right, then the contents
+function section(title, ...body) {
+  const opts = body[0] && body[0].constructor === Object && !(body[0] instanceof Node) ? body.shift() : {};
+  return el("section", "block" + (opts.class ? " " + opts.class : ""),
+    el("div", "head", el("h2", null, title), opts.actions ? el("div", "actions", opts.actions) : null), ...body);
+}
+
+// a row of headline numbers in one panel, split by hairlines: stats([stat(...), ...]) or stats("Title", [...]) for a window
+function stats(title, cells) {
+  if (Array.isArray(title)) [title, cells] = [null, title];
+  const grid = el("div", "stats", cells);
+  return title ? el("div", "card stats-card", el("h3", null, title), grid) : el("div", "card stats-card bare", grid);
+}
+
+// one headline number: what it is, the number, then any lines under it
+function stat(label, value, ...sub) {
+  return el("div", "stat", el("div", "label", label), value instanceof Node && value.classList?.contains("big") ? value : big(value),
+    sub.filter(x => x != null && x !== false && x !== "").map(x => el("div", "sub", x)));
+}
+
+// a big number with its units set smaller ("4.2 s", "6 h 58 min"); nodes pass straight through
+function big(v, ...more) {
+  const box = el("div", "big");
+  if (v instanceof Node) box.append(v);
+  else for (const part of String(v ?? "–").split(/(\d[\d.,]*)/)) if (part) box.append(/^\d/.test(part) ? part : el("small", "u", part));
+  box.append(...more.filter(Boolean));
+  return box;
+}
+
+// waiting on the server: an old-style block progress bar
+function loading(text = "Loading") {
+  return el("div", "loading", el("div", "bar", el("i"), el("i"), el("i")), el("span", null, text + "…"));
+}
 
 // a set of buttons where one is on: seg(options [[value, label]], current, onchange)
 function seg(options, value, change) {

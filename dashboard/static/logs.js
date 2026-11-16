@@ -23,7 +23,7 @@ App.register("logs", (() => {
       box.dataset.l = l;
       return el("label", "lvl", box, l === "INFO" ? "Info" : l === "WARN" ? "Warnings" : "Errors");
     });
-    page.append(el("div", "filters", source, seg(RANGES, st.range, v => { st.range = v; reload(); }), ...levels, search, info), list);
+    page.append(el("div", "filters toolbar", source, seg(RANGES, st.range, v => { st.range = v; reload(); }), ...levels, search, info), list);
     view.append(page);
     list.addEventListener("click", e => { if (e.target.classList.contains("more")) older(); });
     reload();
@@ -41,7 +41,7 @@ App.register("logs", (() => {
   async function reload() {
     clearInterval(timer);
     entries = []; newest = 0;
-    list.replaceChildren(el("p", "muted", "Loading…"));
+    list.replaceChildren(loading());
     const end = Date.now();
     const start = st.range === "live" ? end - 3600_000 : end - +st.range * 3600_000;
     try {

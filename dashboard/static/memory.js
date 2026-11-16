@@ -6,7 +6,7 @@ App.register("memory", (() => {
   async function mount(view) {
     page = el("div", "page");
     view.append(page);
-    page.append(el("p", "muted", "Loading…"));
+    page.append(loading());
     render(await api("/api/memory"));
     // she saves memories during a session; show them as they come, but never under someone's typing
     App.every(5000, async () => {
@@ -29,11 +29,11 @@ App.register("memory", (() => {
     last = JSON.stringify(m);
     const people = m.people.filter(p => p.notes.length);
     page.replaceChildren(
-      el("p", { class: "note", style: "margin:0 0 18px" }, "She saves these herself: facts people tell her, moments the group would want remembered, and up to three highlights when a ?chat session ends. "
+      el("p", "intro", "She saves these herself: facts people tell her, moments the group would want remembered, and up to three highlights when a ?chat session ends. "
         + "She sees the shared memories and the facts about whoever's in voice every time she replies. Changes here apply on her next reply, no restart needed."),
-      el("section", "block", el("h2", null, "Shared memories", el("small", "muted", " " + m.group.length + " of 40, oldest first; the newest 20 are in her context")),
+      section(["Shared memories", el("small", "muted", m.group.length + " of 40, oldest first; the newest 20 are in her context")],
         entry("group", m.group, "Something the group would want her to remember")),
-      el("section", "block", el("h2", null, "About people"),
+      section("About people",
         people.length ? el("div", "grid wide", people.map(p => card(p.name, entry(p.id, p.notes, "Something about " + p.name))))
           : el("p", "empty", "Nobody yet.")));
   }

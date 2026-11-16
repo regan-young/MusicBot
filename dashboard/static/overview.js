@@ -7,7 +7,7 @@ App.register("overview", (() => {
   async function mount(view) {
     page = el("div", "page");
     view.append(page);
-    page.append(el("p", "muted", "Loading…"));
+    page.append(loading());
     shown = {}; res = undefined; resAt = 0; replies = undefined;
     await refresh();
     App.every(5000, refresh);
@@ -32,8 +32,7 @@ App.register("overview", (() => {
     const { now, ...rest } = o;
     put("status", [rest.containers, rest.deployed, rest.voice_server, rest.activity, rest.config_pending, minute], () => statusCards(o));
     put("now", [rest.history, rest.review, minute], () => nowCards(o));
-    put("range", hours, () => el("div", "filters", el("span", "muted", "Range"), seg(Replies.RANGES, hours, range)));
-    put("replies", [hours, replies, minute], () => Replies.render(replies, hours));
+    put("replies", [hours, replies, minute], () => Replies.render(replies, hours, seg(Replies.RANGES, hours, range)));
     put("resources", [hours, res], () => resources(res));
     put("warnings", rest.warnings, () => warnings(o.warnings));
   }
@@ -49,48 +48,46 @@ App.register("overview", (() => {
   function statusCards(o) {
     const bot = o.containers.musicbot || {}, coder = o.containers["musicbot-coder"] || {}, vs = o.voice_server || {}, a = o.activity || {};
     const d = o.deployed;
-    return el("section", "block", el("h2", null, "Status"), el("div", "grid",
-      card("Bot",
-        el("div", "big", bot.running ? el("span", "status good", "Running") : el("span", "status critical", bot.status === "missing" ? "Missing" : "Stopped")),
-        el("div", "sub", bot.started ? "Up since " + fmt.when(bot.started) + ", " + fmt.ago(bot.started) : ""),
-        d ? el("div", "sub", "Built from ", el("a", { href: "https://github.com/regan-young/MusicBot/commit/" + d.sha, target: "_blank", rel: "noopener" }, d.sha), " · " + d.subject) : null,
-        o.config_pending ? el("div", "sub", el("span", "status warning", "Config changed"), " ", el("a", { href: "#config" }, "restart to apply")) : null),
-      card("Voice",
-        el("div", "big", a.live ? el("span", "status good", "Someone's talking") : el("span", "status idle", "Quiet")),
-        el("div", "sub", a.last_heard ? "Last heard " + fmt.ago(a.last_heard) + " · " + a.heard_10m + " lines in 10 min" : "Nobody heard in the last 10 minutes"),
-        a.recording ? el("div", "sub", "Recording this session") : null),
-      card("Speech server",
-        el("div", "big", !vs.configured ? el("span", "status idle", "Off") : vs.up ? el("span", "status good", "Up") : el("span", "status critical", "Not answering")),
-        el("div", "sub", vs.configured ? (vs.host || "") + (vs.up ? " · answered in " + vs.ms + " ms" : " · " + (vs.error || "")) : "voiceapi isn't set"),
-        vs.models ? el("div", "sub", vs.models.map(m => m.split("/").pop()).join(", ")) : null),
-      card("Coder sidecar",
-        el("div", "big", !coder.running ? el("span", "status critical", "Stopped")
-          : coder.health === "healthy" ? el("span", "status good", "Healthy") : el("span", "status warning", coder.health || "Running")),
-        el("div", "sub", coder.started ? "Up since " + fmt.when(coder.started) : ""),
-        el("div", "sub", "Runs Claude Code when someone asks the bot to change itself"))));
+    const state = (cls, text) => big(el("span", "status " + cls, text));
+    return section("Status", stats([
+      stat("Bot", bot.running ? state("good", "Running") : state("critical", bot.status === "missing" ? "Missing" : "Stopped"),
+        bot.started ? "Up " + fmt.ago(bot.started).replace(" ago", "") + ", since " + fmt.when(bot.started) : "",
+        d ? el("span", null, "Built from ", el("a", { href: "https://github.com/regan-young/MusicBot/commit/" + d.sha, target: "_blank", rel: "noopener", title: d.subject }, d.sha), " · " + d.subject) : null,
+        o.config_pending ? el("span", null, el("span", "status warning", "Config changed"), " ", el("a", { href: "#config" }, "restart to apply")) : null),
+      stat("Voice", a.live ? state("good", "Someone's talking") : state("idle", "Quiet"),
+        a.last_heard ? "Last heard " + fmt.ago(a.last_heard) + " · " + a.heard_10m + " lines in 10 min" : "Nobody heard in the last 10 minutes",
+        a.recording ? "Recording this session" : null),
+      stat("Speech server", !vs.configured ? state("idle", "Off") : vs.up ? state("good", "Up") : state("critical", "Not answering"),
+        vs.configured ? (vs.host || "") + (vs.up ? " · answered in " + vs.ms + " ms" : " · " + (vs.error || "")) : "voiceapi isn't set",
+        vs.models ? vs.models.map(m => m.split("/").pop()).join(", ") : null),
+      stat("Coder sidecar", !coder.running ? state("critical", "Stopped")
+          : coder.health === "healthy" ? state("good", "Healthy") : state("warning", coder.health || "Running"),
+        coder.started ? "Up since " + fmt.when(coder.started) : "",
+        "Runs Claude Code when someone asks the bot to change itself"),
+    ]));
   }
 
   function nowCards(o) {
     const h = o.history || {}, s = h.last_session, p = h.playing, r = o.review || {};
-    const cards = [];
-    cards.push(p ? card("Playing now",
-      el("div", { style: "font-weight:600;font-size:17px" }, p.uri ? el("a", { href: p.uri, target: "_blank", rel: "noopener" }, p.title) : p.title),
-      el("div", "sub", (p.requester ? "Asked for by " + p.requester + " · " : "") + "started " + fmt.ago(p.started)))
-      : card("Playing now", el("div", "big", el("span", "status idle", "Nothing")), el("div", "sub", h.week_plays != null ? h.week_plays + " songs in the last 7 days, for " + h.week_requesters + " people" : "")));
-    if (s) cards.push(card("Last voice session",
-      el("div", "big", fmt.span(s.end - s.start)),
-      el("div", "sub", fmt.when(s.start) + " · " + s.people + " people"),
-      el("div", "sub", fmt.int(s.lines) + " lines heard, " + s.for_bot + " to the bot, " + s.plays + " songs played"),
-      el("div", "sub", el("a", { href: "#metrics" }, "Response times and more"))));
-    if (r.clips) cards.push(card("Transcript review",
-      el("div", "big", fmt.int(r.reviewed), el("small", null, " of " + fmt.int(r.clips))),
-      el("div", "sub", fmt.pct(100 * r.reviewed / r.clips) + " of recorded lines checked"),
-      el("div", "sub", el("a", { href: "#transcripts" }, "Carry on reviewing"))));
-    return el("section", "block", el("h2", null, "Now"), el("div", "grid", cards));
+    const cells = [];
+    cells.push(p ? stat("Playing now",
+      big(el("span", "song", p.uri ? el("a", { href: p.uri, target: "_blank", rel: "noopener", title: p.title }, p.title) : p.title)),
+      (p.requester ? "Asked for by " + p.requester + " · " : "") + "started " + fmt.ago(p.started))
+      : stat("Playing now", big(el("span", "status idle", "Nothing")),
+        h.week_plays != null ? h.week_plays + " songs in the last 7 days, for " + h.week_requesters + " people" : ""));
+    if (s) cells.push(stat("Last voice session", fmt.span(s.end - s.start),
+      fmt.when(s.start) + " · " + s.people + " people",
+      fmt.int(s.lines) + " lines heard, " + s.for_bot + " to the bot, " + s.plays + " songs played",
+      el("a", { href: "#metrics" }, "Response times and more →")));
+    if (r.clips) cells.push(stat("Transcript review", big(fmt.int(r.reviewed), el("small", "u", " of " + fmt.int(r.clips))),
+      el("span", "meter", el("i", { style: "width:" + Math.min(100, 100 * r.reviewed / r.clips).toFixed(1) + "%" })),
+      fmt.pct(100 * r.reviewed / r.clips) + " of recorded lines checked",
+      el("a", { href: "#transcripts" }, "Carry on reviewing →")));
+    return section("Now", stats(cells));
   }
 
   function resources(res) {
-    const box = el("section", "block resources", el("h2", null, "CPU and memory, last " + Replies.label(hours)));
+    const box = section("CPU and memory, last " + Replies.label(hours), { class: "resources" });
     if (!res || (!Object.keys(res.cpu || {}).length && !Object.keys(res.memory || {}).length)) {
       box.append(el("p", "muted", "Prometheus didn't answer" + (res && res.error ? " (" + res.error + ")" : "") + "."));
       return box;
@@ -105,7 +102,7 @@ App.register("overview", (() => {
   }
 
   function warnings(w) {
-    const box = el("section", "block", el("h2", null, "Warnings and errors, last 24 hours"));
+    const box = section("Warnings and errors, last 24 hours");
     if (!w || w.count == null) { box.append(el("p", "muted", "The logs couldn't be read.")); return box; }
     if (!w.count) { box.append(el("p", null, el("span", "status good", "None"))); return box; }
     box.append(el("p", null, el("span", "status warning", w.count >= 200 ? "200 or more" : String(w.count)), " ",

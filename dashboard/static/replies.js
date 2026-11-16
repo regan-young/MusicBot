@@ -20,21 +20,22 @@ const Replies = (() => {
     return api("/api/replies?hours=" + hours).catch(e => ({ replies: [], error: e.message }));
   }
 
-  function render(r, hours) {
-    const box = el("section", "block", el("h2", null, "Reply times, last " + label(hours)));
-    if (!r) { box.append(el("p", "muted", "Loading…")); return box; }
+  // actions: controls for the section's heading (Overview puts its range there)
+  function render(r, hours, actions) {
+    const box = section("Reply times, last " + label(hours), { actions });
+    if (!r) { box.append(loading()); return box; }
     if (r.error) { box.append(el("p", "muted", "Loki didn't answer (" + r.error + "), so reply times can't be shown.")); return box; }
     if (!r.replies.length) { box.append(el("p", "empty", "Nobody has said anything to her in this time.")); return box; }
     const answered = r.replies.filter(x => x.response != null);
     const times = answered.map(x => x.response), last = answered[answered.length - 1];
     const quiet = r.replies.length - answered.length;
-    box.append(el("div", "grid",
-      card("Last reply", el("div", "big", last ? fmt.ms(last.response) : "–"),
-        el("div", "sub", last ? last.who + " · " + fmt.ago(last.at) : "No spoken replies in this time")),
-      card("Typical", el("div", "big", fmt.ms(pct(times, 50))), el("div", "sub", "From when someone stops talking to her first word")),
-      card("Slow", el("div", "big", fmt.ms(pct(times, 90))), el("div", "sub", "One reply in ten takes this long or longer")),
-      card("Said to her", el("div", "big", fmt.int(r.replies.length)),
-        el("div", "sub", fmt.int(answered.length) + " answered out loud" + (quiet ? ", " + quiet + " done without speaking" : "")))));
+    box.append(stats([
+      stat("Last reply", last ? fmt.ms(last.response) : "–", last ? last.who + " · " + fmt.ago(last.at) : "No spoken replies in this time"),
+      stat("Typical", fmt.ms(pct(times, 50)), "From when someone stops talking to her first word"),
+      stat("Slow", fmt.ms(pct(times, 90)), "One reply in ten takes this long or longer"),
+      stat("Said to her", fmt.int(r.replies.length),
+        fmt.int(answered.length) + " answered out loud" + (quiet ? ", " + quiet + " done without speaking" : "")),
+    ]));
     const x = hours <= 1 ? clock : fmt.time;
     const steps = STEPS.map(([k, name, color]) => ({ name, color,
       points: r.replies.map(p => [p.at, k === "llm_first" ? p.llm_first ?? p.llm : p[k]]).filter(p => p[1] != null) }));
@@ -43,7 +44,7 @@ const Replies = (() => {
         yFormat: fmt.ms, xFormat: x, height: 190, gap: GAP })),
       card("Each step, per reply", Charts.area({ series: steps, yFormat: fmt.ms, xFormat: x, height: 190, gap: GAP, totalLabel: "All steps" }))));
     const recent = r.replies.slice(-15).reverse();
-    box.append(el("div", { class: "card", style: "margin-top:14px" }, el("h3", null, "Latest"), table(recent, [
+    box.append(el("div", "card", el("h3", null, "Latest replies"), table(recent, [
       ["Time", p => clock(p.at)], ["Who", p => p.who],
       ["Said", p => el("span", { title: p.said }, p.said), "title"], ["Did", p => p.action],
       ["Waiting", p => fmt.ms(p.turn), "n"], ["Speech rec.", p => fmt.ms(p.stt), "n"], ["Router", p => fmt.ms(p.router), "n"],

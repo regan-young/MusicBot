@@ -15,7 +15,7 @@ App.register("metrics", (() => {
 
   // quiet: a refresh in the background, which redraws only if the numbers have changed
   async function load(quiet) {
-    if (!quiet) { last = ""; page.replaceChildren(filters(), el("p", "muted", "Loading…")); }
+    if (!quiet) { last = ""; page.replaceChildren(filters(), loading()); }
     const asked = hours;
     const [m, r] = await Promise.all([api("/api/metrics?hours=" + hours), short() ? Replies.load(hours) : null]);
     loadedAt = Date.now();
@@ -26,7 +26,7 @@ App.register("metrics", (() => {
   }
 
   function filters() {
-    return el("div", "filters", el("span", "muted", "Range"),
+    return el("div", "filters toolbar", el("span", "muted", "Range"),
       seg(RANGES, hours, v => { hours = v; Prefs.set("metricsHours", v); load(); }));
   }
 
@@ -35,11 +35,12 @@ App.register("metrics", (() => {
     if (!ss.length && !m.plays_by_day.length) return [el("p", "empty", "Nothing recorded in this range.")];
     const out = [];
     const plays = m.plays_by_day.reduce((a, d) => a + d[1], 0);
-    out.push(el("div", "grid",
-      card("Typical response", el("div", "big", fmt.ms(st.response_p50)), el("div", "sub", "From when someone stops talking to the bot's first word, over " + fmt.int(st.replies) + " replies")),
-      card("Slow responses", el("div", "big", fmt.ms(st.response_p90)), el("div", "sub", "One reply in ten takes this long or longer")),
-      card("Voice sessions", el("div", "big", fmt.int(ss.length)), el("div", "sub", fmt.int(ss.reduce((a, s) => a + s.lines, 0)) + " lines heard, " + fmt.int(ss.reduce((a, s) => a + s.for_bot, 0)) + " to the bot")),
-      card("Songs played", el("div", "big", fmt.int(plays)), el("div", "sub", "On " + m.plays_by_day.length + (m.plays_by_day.length === 1 ? " day" : " days")))));
+    out.push(section("Summary", stats([
+      stat("Typical response", fmt.ms(st.response_p50), "From when someone stops talking to the bot's first word, over " + fmt.int(st.replies) + " replies"),
+      stat("Slow responses", fmt.ms(st.response_p90), "One reply in ten takes this long or longer"),
+      stat("Voice sessions", fmt.int(ss.length), fmt.int(ss.reduce((a, s) => a + s.lines, 0)) + " lines heard, " + fmt.int(ss.reduce((a, s) => a + s.for_bot, 0)) + " to the bot"),
+      stat("Songs played", fmt.int(plays), "On " + m.plays_by_day.length + (m.plays_by_day.length === 1 ? " day" : " days")),
+    ])));
 
     // where a reply's time goes
     const parts = [
@@ -49,7 +50,7 @@ App.register("metrics", (() => {
       { name: "Chat model", value: st.llm, color: "var(--s4)" },
       { name: "First sentence of speech", value: st.tts, color: "var(--s5)" },
     ];
-    out.push(el("section", "block", el("h2", null, "Where a reply's time goes"),
+    out.push(section("Where a reply's time goes",
       el("div", "card", Charts.stack({ parts, format: fmt.ms }),
         el("p", "note", "Medians of each step for lines said to the bot. They add up to roughly the typical response; the rest is queueing and playback starting."))));
 
@@ -58,11 +59,11 @@ App.register("metrics", (() => {
         { name: "Typical (median)", color: "var(--s1)", points: ss.filter(s => s.p50 != null).map(s => [s.start, s.p50]) },
         { name: "Slow (1 in 10)", color: "var(--s2)", points: ss.filter(s => s.p90 != null).map(s => [s.start, s.p90]) },
       ];
-      out.push(el("section", "block", el("h2", null, "Response time by session"),
+      out.push(section("Response time by session",
         el("div", "card", Charts.line({ series, yFormat: fmt.ms, xFormat: fmt.day, yMax: undefined }))));
     }
 
-    out.push(el("section", "block", el("h2", null, "Sessions"), el("div", "card", table(ss.slice().reverse(), [
+    out.push(section("Sessions", el("div", "card", table(ss.slice().reverse(), [
       ["Started", s => fmt.when(s.start)], ["Length", s => fmt.span(s.end - s.start), "n"], ["People", s => s.people, "n"],
       ["Lines", s => fmt.int(s.lines), "n"], ["To the bot", s => s.for_bot, "n"], ["Commands", s => s.commands, "n"], ["Songs", s => s.plays, "n"],
       ["Replies", s => s.replies, "n"], ["Typical", s => fmt.ms(s.p50), "n"], ["Slow", s => fmt.ms(s.p90), "n"],
@@ -70,8 +71,8 @@ App.register("metrics", (() => {
     ]), ss.some(s => s.timings === false) ? el("p", "note", "Loki didn't answer, so reply times are missing.") : null)));
 
     // music
-    const music = el("section", "block", el("h2", null, "Music"));
-    if (m.plays_by_day.length) music.append(el("div", { class: "card", style: "margin-bottom:14px" }, el("h3", null, "Songs played per day"),
+    const music = section("Music");
+    if (m.plays_by_day.length) music.append(el("div", "card", el("h3", null, "Songs played per day"),
       Charts.bars({ data: m.plays_by_day.map(([d, n, radio]) => ({ label: d.slice(5).replace("-", "/"), value: n, tip: fmt.day(d + "T12:00"),
         extra: radio ? [{ value: String(radio), label: "radio" }] : [] })), name: "songs", yFormat: v => String(Math.round(v)) })));
     music.append(el("div", "grid wide",
@@ -82,7 +83,7 @@ App.register("metrics", (() => {
     out.push(music);
 
     // speech recognition per person
-    out.push(el("section", "block", el("h2", null, "Speech recognition by person"), el("div", "card", table(m.speech, [
+    out.push(section("Speech recognition by person", el("div", "card", table(m.speech, [
       ["Person", p => p.name], ["Lines", p => fmt.int(p.lines), "n"], ["Minutes", p => p.minutes, "n"], ["Heard nothing", p => p.heard_nothing, "n"],
       ["Avg time", p => fmt.ms(p.stt_ms), "n"], ["Reviewed", p => p.reviewed, "n"],
       ["Lines wrong", p => p.reviewed ? fmt.pct(100 * p.wrong / p.reviewed) : "–", "n"], ["Word error rate", p => fmt.pct(p.wer), "n"],

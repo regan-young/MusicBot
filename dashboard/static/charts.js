@@ -39,6 +39,19 @@ const Charts = (() => {
     tip.style.top = Math.max(0, y - tip.offsetHeight - 8) + "px";
   }
 
+  // time labels along the bottom, evenly spaced; a label the same as the one before (two ticks on one day) is left out
+  function xAxis(s, x0, x1, X, w, height, xFormat) {
+    const n = Math.max(2, Math.min(6, Math.floor((w - M.l - M.r) / 110)));
+    let prev = null;
+    for (let i = 0; i < n; i++) {
+      const v = x0 + (x1 - x0) * i / (n - 1), text = xFormat(v);
+      if (text === prev) continue;
+      prev = text;
+      const t = svg("text", { class: "axis-text", x: X(v), y: height - 6, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" });
+      t.textContent = text; s.append(t);
+    }
+  }
+
   function legend(series, kind) {
     if (series.length < 2) return null;
     return el("div", "legend", series.map(s => { const i = el("i", kind === "box" ? "box" : ""); i.style.background = s.color; return el("span", null, i, s.name); }));
@@ -64,12 +77,7 @@ const Charts = (() => {
         s.append(svg("line", { class: "grid-line", x1: M.l, x2: w - M.r, y1: Y(t), y2: Y(t) }));
         const label = svg("text", { class: "axis-text", x: M.l - 8, y: Y(t) + 4, "text-anchor": "end" }); label.textContent = yFormat(t); s.append(label);
       }
-      const n = Math.max(2, Math.min(6, Math.floor((w - M.l - M.r) / 110)));
-      for (let i = 0; i < n && xs.length > 1; i++) {
-        const v = x0 + (x1 - x0) * i / (n - 1);
-        const t = svg("text", { class: "axis-text", x: X(v), y: height - 6, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" });
-        t.textContent = xFormat(v); s.append(t);
-      }
+      if (xs.length > 1) xAxis(s, x0, x1, X, w, height, xFormat);
       if (xs.length === 1) { const t = svg("text", { class: "axis-text", x: X(x0), y: height - 6, "text-anchor": "middle" }); t.textContent = xFormat(x0); s.append(t); }
       for (const se of series) {
         const pts = se.points.filter(p => p[1] != null);
@@ -132,12 +140,7 @@ const Charts = (() => {
         s.append(svg("line", { class: "grid-line", x1: M.l, x2: w - M.r, y1: Y(t), y2: Y(t) }));
         const label = svg("text", { class: "axis-text", x: M.l - 8, y: Y(t) + 4, "text-anchor": "end" }); label.textContent = yFormat(t); s.append(label);
       }
-      const n = Math.max(2, Math.min(6, Math.floor((w - M.l - M.r) / 110)));
-      for (let i = 0; i < n && xs.length > 1; i++) {
-        const v = x0 + (x1 - x0) * i / (n - 1);
-        const t = svg("text", { class: "axis-text", x: X(v), y: height - 6, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" });
-        t.textContent = xFormat(v); s.append(t);
-      }
+      if (xs.length > 1) xAxis(s, x0, x1, X, w, height, xFormat);
       series.forEach((se, k) => {
         const [lo, hi] = tops[k];
         for (const run of runs) {

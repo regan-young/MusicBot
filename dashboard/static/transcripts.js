@@ -43,11 +43,11 @@ App.register("transcripts", (() => {
     tip = el("div", "tip");
     strip = el("div", { class: "tx-timeline", title: "" }, canvas, tip);
     root = el("div", "tx",
-      el("div", "tx-bar", ui.session, ui.speaker, ui.show,
-        el("label", { title: "Lines that named the bot or that it acted on" }, ui.forbot, "To the bot"), ui.search,
+      el("div", "tx-bar", ui.session, ui.speaker, ui.show, el("span", "sep"),
+        el("label", { title: "Lines that named the bot or that it acted on" }, ui.forbot, "To the bot"), ui.search, el("span", "sep"),
         el("label", null, ui.autoplay, "Play on focus"),
         el("label", { title: "A line you stayed on long enough to hear and then left unchanged is marked as heard right" }, ui.autocheck, "Leaving marks right"),
-        ui.order, ui.speed, ui.count),
+        el("span", "sep"), ui.order, ui.speed, ui.count),
       el("div", "tx-progress", ui.bar),
       el("div", "tx-body", list, strip),
       el("div", "tx-keys",
@@ -104,7 +104,7 @@ App.register("transcripts", (() => {
 
   // ---- sessions ----
   async function loadSessions(want) {
-    list.replaceChildren(el("div", "tx-empty", "Loading…"));
+    list.replaceChildren(el("div", "tx-empty", loading()));
     const all = await api("/api/sessions");
     sessionOptions(all);
     if (!all.length) { list.replaceChildren(el("div", "tx-empty", "No recorded sessions yet. They appear here once ?chat has been used.")); return; }
@@ -162,7 +162,7 @@ App.register("transcripts", (() => {
   }
 
   async function openSession(id) {
-    list.replaceChildren(el("div", "tx-empty", "Loading…"));
+    list.replaceChildren(el("div", "tx-empty", loading()));
     S = await api("/api/session/" + encodeURIComponent(id));
     ui.session.value = id;
     history.replaceState(null, "", "#transcripts/" + encodeURIComponent(id));
